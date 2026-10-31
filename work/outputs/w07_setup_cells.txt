@@ -1,0 +1,333 @@
+=== CELL 4 code ===
+import sys, math
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+import sklearn
+import matplotlib
+import matplotlib.pyplot as plt
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import GroupKFold
+
+SEED = 42
+KS = (20, 50, 100)
+LABELS = ["y_decline", "y_low_ctr"]
+
+root = next(p for p in [Path.cwd(), *Path.cwd().parents]
+            if (p / "work").is_dir() and (p / "scripts").is_dir())
+OUT = root / "work" / "outputs"
+FIG = root / "work" / "figures"
+OUT.mkdir(parents=True, exist_ok=True)
+FIG.mkdir(parents=True, exist_ok=True)
+
+queue_path = OUT / "baseline_action_score.csv"
+if not queue_path.exists():
+    raise FileNotFoundError("Run w04_baseline_score.ipynb first: it writes work/outputs/baseline_action_score.csv")
+
+df = pd.read_csv(queue_path).sort_values("rank").reset_index(drop=True)
+df["imp_feat"] = df["imp_early"] + df["imp_may"]
+
+need = {"client_hash_id", "content_hash_id", "rank", "baseline_action_score", "reason_code",
+        "imp_early", "imp_may", "imp_jun", "recent_ratio", "slip", "ctr_feat", "ctr_gap",
+        "tier_expected_ctr", "position_tier", "pos_feat", "visibility", "days_with_imp_feat",
+        "y_decline", "y_low_ctr"}
+missing = need - set(df.columns)
+assert not missing, f"missing columns from the W4 export: {missing}"
+
+print(f"Reproducibility: seed={SEED} | python {sys.version.split()[0]} | pandas {pd.__version__} | "
+      f"numpy {np.__version__} | scikit-learn {sklearn.__version__}")
+print(f"Source: {queue_path.name} (modified {pd.Timestamp(queue_path.stat().st_mtime, unit='s'):%Y-%m-%d %H:%M})")
+print(f"{len(df):,} pages | {df['client_hash_id'].nunique()} clients (after W4 eligibility filters)")
+for lab in LABELS:
+    print(f"Base rate {lab}: {df[lab].mean():.3f} (labelled rows: {df[lab].notna().sum():,})")
+
+=== CELL 5 markdown ===
+## 1. Ranked actions + reason codes
+
+### 1a. Score every page honestly (out-of-fold)
+
+A model that is fitted on a page's own client and then used to score that page looks better than it is (W6 showed this: random-row split gave P@50 1.000 vs 0.852 client-grouped for `y_decline`). So here **every page is scored by a forest that was trained on other clients only**: the same 5 client-grouped folds as W5 and W6.
+
+One difference from W5: W5 scored only pages that have a June label. A real queue must score **all** pages, including those with fewer than 100 June impressions (no `y_low_ctr` label). So each fold's forest is trained on labelled training rows and predicts **all** pages of the held-out clients. For the labelled pages this must reproduce the W5 predictions; the lineage check below tests that.
+
+=== CELL 6 code ===
+# Features: identical to W5 (March-May only)
+X = pd.DataFrame({
+    "log_imp_early":      np.log1p(df["imp_early"]),
+    "log_imp_may":        np.log1p(df["imp_may"]),
+    "log_imp_feat":       np.log1p(df["imp_feat"]),
+    "recent_ratio_c":     df["recent_ratio"].clip(0, 5),
+    "slip":               df["slip"],
+    "log_ctr_feat":       np.log1p(df["ctr_feat"]),
+    "ctr_gap":            df["ctr_gap"],
+    "tier_expected_ctr":  df["tier_expected_ctr"],
+    "log_pos_feat":       np.log1p(df["pos_feat"]),
+    "days_with_imp_feat": df["days_with_imp_feat"],
+})
+tiers = pd.get_dummies(df["position_tier"].astype(str), prefix="tier", dtype=float)
+X = pd.concat([X, tiers], axis=1)
+
+# Leakage guard: no June column, no outcome, no score, no ID may be a feature
+bad = [c for c in X.columns if "jun" in c.lower() or c.startswith("y_") or "score" in c.lower()
+       or c in ("client_hash_id", "content_hash_id", "rank")]
+assert not bad, f"leak or ID in features: {bad}"
+print(f"{X.shape[1]} features:", list(X.columns))
+
+=== CELL 7 code ===
+CACHE = OUT / "w07_oof_all_rows.csv"
+REFRESH = False   # set True only if you changed the features or the model
+
+def make_forest():
+    return RandomForestClassifier(n_estimators=300, max_depth=10, min_samples_leaf=50,
+                                  class_weight="balanced_subsample", random_state=SEED, n_jobs=-1)
+
+groups = df["client_hash_id"].to_numpy()
+splits = list(GroupKFold(n_splits=5).split(X, groups=groups))
+fold_of = np.full(len(df), -1)
+for f, (tr, te) in enumerate(splits, 1):
+    assert not (set(groups[tr]) & set(groups[te])), "a client appears in both train and test"
+    fold_of[te] = f
+
+keys = (df["client_hash_id"].astype(str) + "|" + df["content_hash_id"].astype(str)).to_numpy()
+loaded = False
+if CACHE.exists() and not REFRESH:
+    c = pd.read_csv(CACHE)
+    if len(c) == len(df) and (c["key"].to_numpy() == keys).all():
+        df["p_decline"] = c["p_decline"].to_numpy()
+        df["p_low_ctr"] = c["p_low_ctr"].to_numpy()
+        loaded = True
+        print("Loaded cached out-of-fold scores:", CACHE.name)
+
+if not loaded:
+    p = {lab: np.full(len(df), np.nan) for lab in LABELS}
+    for f, (tr, te) in enumerate(splits, 1):
+        for lab in LABELS:
+            y = df[lab].astype(float).to_numpy()
+            ok = ~np.isnan(y[tr])
+            rf = make_forest().fit(X.iloc[tr[ok]], y[tr][ok].astype(int))
+            p[lab][te] = rf.predict_proba(X.iloc[te])[:, 1]
+        print(f"fold {f}: trained on {len(tr):,} rows / {len(set(groups[tr]))} clients, "
+              f"scored {len(te):,} rows / {len(set(groups[te]))} held-out clients")
+    df["p_decline"] = p["y_decline"]
+    df["p_low_ctr"] = p["y_low_ctr"]
+    pd.DataFrame({"key": keys, "p_decline": df["p_decline"], "p_low_ctr": df["p_low_ctr"]}).to_csv(CACHE, index=False)
+    print("Cached:", CACHE.name)
+
+assert df["p_decline"].notna().all() and df["p_low_ctr"].notna().all(), "every page must have both scores"
+print("Scored pages:", f"{len(df):,}", "| fold sizes:", np.bincount(fold_of)[1:].tolist())
+
+=== CELL 8 code ===
+# Lineage check: for pages W5 also scored, the predictions must match W5's out-of-fold file
+w5 = OUT / "w05_oof_predictions.csv"
+if w5.exists():
+    o = pd.read_csv(w5)
+    same_rows = (len(o) == len(df)
+                 and (o["content_hash_id"].to_numpy() == df["content_hash_id"].to_numpy()).all()
+                 and (o["client_hash_id"].to_numpy() == df["client_hash_id"].to_numpy()).all())
+    if same_rows:
+        for lab, col in [("y_decline", "p_decline"), ("y_low_ctr", "p_low_ctr")]:
+            d = (df[col] - o[f"oof_{lab}_random_forest"]).abs().max()
+            status = "OK" if d < 1e-6 else "DIFFERS (library version or data changed; re-run W5 before trusting the comparison)"
+            print(f"{lab}: max |this notebook - W5| on W5's rows = {d:.2e} -> {status}")
+    else:
+        print("W5 file has different rows or order than the W4 export: re-run W4 and W5 in order.")
+else:
+    print("w05_oof_predictions.csv not found: lineage check skipped (run w05_model.ipynb to enable it).")
+
+=== CELL 9 markdown ===
+### 1a-bis. What the out-of-fold scoring showed
+
+- Every one of the 90,966 pages has both scores (`p_decline`, `p_low_ctr`), each produced by a forest trained on other clients only. The held-out folds have 1, 7, 10, 8 and 11 clients (22,115 / 17,213 / 17,212 / 17,214 / 17,212 pages). Fold 1 is one single client, as in W5 and W6.
+- **Lineage check passed:** the largest difference from W5's out-of-fold file is 5.55e-16 for `y_decline` and 7.77e-16 for `y_low_ctr`. That is floating-point rounding, so same model, same split, same seed.
+- What is new compared with W5: W5 scored only pages that have a June label. Here pages with fewer than 100 June impressions (no `y_low_ctr` label) are scored too, because a real queue has to rank every page, not only the ones whose outcome is already known.
+
+=== CELL 10 markdown ===
+### 1b. The playbook rule
+
+One action per page, decided by `if / elif` checks **ordered by severity**: the first check that fires wins. The order matters: a page with a suspicious measurement must never reach a "go and edit the page" action.
+
+| # | Action | Fires when | Why |
+|---|---|---|---|
+| 1 | `verify_data_first` | average position below 1, or zero clicks on 5,000+ March-May impressions | not a real search position / possible tracking gap (seen in W4's top 20) |
+| 2 | `verify_then_review` | May impressions far above the page's own history (99th percentile of rises) | more likely a tracking or campaign artifact than real growth |
+| 3 | `check_technical_first` | May impressions collapsed by 90% or more versus the page's own monthly average | de-indexing, redirect, URL change or tracking change look the same as a content problem |
+| 4 | `monitor_only` | fewer than 5 expected clicks (March-May impressions x the tier's expected CTR) | a CTR gap cannot be measured on so few expected clicks; this removes the low-volume pages that filled the top 20 in an earlier run |
+| 5 | `review_ctr_metadata` | W4 reason is `ctr_below_tier_expected` **and** the model's CTR score is in the top 20% | CTR outcome was **stable across folds** in W6 (but partly persistence) |
+| 6 | `review_content_refresh` | W4 reason is `slipping_visibility` **and** the model's decline score is in the top 20% | decline outcome was only **directional** in W6 |
+| 7 | `monitor_only` | everything else | no strong signal |
+
+**Ranking inside the review queue** is by estimated clicks at stake, not by model score: missed clicks versus the tier's expected CTR for CTR items, lost clicks from the May slip for refresh items. The model score only decides who enters the review pool. This follows a check in W6 (the `ctr_gap_only` vs `missed_clicks` cell): for `y_low_ctr`, ranking by missed clicks gave P@50 0.92 per fold on average against 0.69 for the plain CTR gap. That was one outcome and one K, so it supports the ordering choice but does not prove it.
+
+The thresholds (0.90 collapse, top 20%, 5,000 impressions, 5 expected clicks, 30% client cap) are **policy choices**, not truths. They are named constants so they can be changed and re-run.
+
+=== CELL 11 code ===
+# ---- Policy constants (change here, re-run, compare) ----
+SLIP_COLLAPSE   = 0.90   # May impressions <= 10% of the page's own Mar-Apr monthly average
+HIGH_Q          = 0.80   # "high model score" = top 20% of all eligible pages
+ZERO_CLICK_IMP  = 5000   # zero clicks on this many March-May impressions is suspicious
+CAPACITY        = 50     # pages a reviewer can handle per cycle (assumption from the lane brief)
+CLIENT_CAP      = 0.30   # no client may fill more than 30% of one review queue
+MIN_EXPECTED_CLICKS = 5
+
+up = df.loc[df["recent_ratio"] > 1, "recent_ratio"]
+spike_threshold = float(up.quantile(0.99)) if len(up) else np.inf   # data-driven: rarest 1% of rises
+p_dec_cut = float(df["p_decline"].quantile(HIGH_Q))
+p_ctr_cut = float(df["p_low_ctr"].quantile(HIGH_Q))
+print(f"spike threshold (99th pct of recent_ratio among rising pages): {spike_threshold:.2f}x its own monthly average")
+print(f"model cut-offs (top 20%): p_decline >= {p_dec_cut:.3f} | p_low_ctr >= {p_ctr_cut:.3f}")
+
+def playbook_action(r):
+    # ordered by severity: the first match wins
+    if r["pos_feat"] < 1:
+        return "verify_data_first", "average position below 1 is not a real search position"
+    if r["ctr_feat"] == 0 and r["imp_feat"] >= ZERO_CLICK_IMP:
+        return "verify_data_first", "zero clicks on a large number of impressions: check tracking before trusting it"
+    if r["recent_ratio"] >= spike_threshold:
+        return "verify_then_review", "extreme rise versus its own history: likely a tracking or campaign artifact"
+    if r["slip"] >= SLIP_COLLAPSE:
+        return "check_technical_first", "May impressions collapsed 90%+: rule out de-indexing, redirect, URL or tracking change"
+    if r["imp_feat"] * r["tier_expected_ctr"] / 100 < MIN_EXPECTED_CLICKS:
+        return "monitor_only", "too few expected clicks to measure a CTR gap"
+    if r["reason_code"] == "ctr_below_tier_expected" and r["p_low_ctr"] >= p_ctr_cut:
+        return "review_ctr_metadata", "CTR below its tier's expectation and the model ranks it in the top 20%"
+    if r["reason_code"] == "slipping_visibility" and r["p_decline"] >= p_dec_cut:
+        return "review_content_refresh", "visibility is slipping and the model ranks it in the top 20%"
+    return "monitor_only", "no strong signal"
+
+res = df.apply(playbook_action, axis=1, result_type="expand")
+df["action"], df["action_why"] = res[0], res[1]
+
+# the model score that matches the reason on the page
+df["model_prob"] = np.where(df["reason_code"] == "ctr_below_tier_expected", df["p_low_ctr"], df["p_decline"])
+df["evidence_strength"] = df["action"].map({
+    "review_ctr_metadata":    "supported: stable across folds in W6, partly persistence of an existing CTR gap",
+    "review_content_refresh": "directional only: not stable across folds in W6",
+    "check_technical_first":  "data / technical suspicion, not a content finding",
+    "verify_then_review":     "data suspicion, not a content finding",
+    "verify_data_first":      "data suspicion, not a content finding",
+    "monitor_only":           "no action",
+})
+
+print()
+print(df["action"].value_counts().to_string())
+
+=== CELL 12 code ===
+# Ranking: reviews first (by model score), then checks, then monitor
+order = {"review_ctr_metadata": 0, "review_content_refresh": 0,
+         "check_technical_first": 1, "verify_then_review": 1, "verify_data_first": 1, "monitor_only": 2}
+df["action_tier"] = df["action"].map(order)
+# estimated clicks at stake, one comparable unit for both review actions
+df["missed_clicks"] = (df["imp_feat"] * (df["tier_expected_ctr"] - df["ctr_feat"]) / 100).clip(lower=0)
+df["lost_clicks_slip"] = ((df["imp_early"] / 2 - df["imp_may"]).clip(lower=0) * df["tier_expected_ctr"] / 100)
+df["opportunity_clicks"] = np.where(df["action"] == "review_content_refresh",
+                                    df["lost_clicks_slip"], df["missed_clicks"])
+ranked = (df.sort_values(["action_tier", "opportunity_clicks", "imp_feat"], ascending=[True, False, False])
+            .reset_index(drop=True))
+ranked["playbook_rank"] = ranked.index + 1
+
+def capped_top(frame, n, cap):
+    """Take the top n rows in order, but never more than ceil(n * cap) from one client."""
+    max_per = int(math.ceil(n * cap))
+    counts, keep = {}, []
+    for idx, cid in zip(frame.index, frame["client_hash_id"]):
+        if counts.get(cid, 0) < max_per:
+            keep.append(idx)
+            counts[cid] = counts.get(cid, 0) + 1
+        if len(keep) == n:
+            break
+    return frame.loc[keep]
+
+review_pool = ranked[ranked["action_tier"] == 0]
+review_uncapped = review_pool.head(CAPACITY)
+review_queue = capped_top(review_pool, CAPACITY, CLIENT_CAP)
+
+check_pool = ranked[ranked["action_tier"] == 1].sort_values("imp_feat", ascending=False)   # biggest exposure first
+check_queue = capped_top(check_pool, CAPACITY, CLIENT_CAP)
+
+print(f"Review pool: {len(review_pool):,} pages | review queue (capacity {CAPACITY}, client cap {CLIENT_CAP:.0%}): {len(review_queue)} pages")
+print(f"Check pool:  {len(check_pool):,} pages | check queue: {len(check_queue)} pages")
+for name, q in [("review, uncapped", review_uncapped), ("review, capped", review_queue), ("check, capped", check_queue)]:
+    s = q["client_hash_id"].value_counts(normalize=True)
+    print(f"  {name:17s}: {q['client_hash_id'].nunique():2d} clients | largest client {s.iloc[0]:.0%}")
+print()
+print("Review queue by action:")
+print(review_queue["action"].value_counts().to_string())
+
+=== CELL 13 markdown ===
+### 1b-bis. What the rule and the queues showed
+
+| Action | Pages | Share |
+|---|---:|---:|
+| `monitor_only` | 79,195 | 87.1% |
+| `review_ctr_metadata` | 7,313 | 8.0% |
+| `review_content_refresh` | 2,849 | 3.1% |
+| `check_technical_first` | 1,001 | 1.1% |
+| `verify_data_first` | 342 | 0.4% |
+| `verify_then_review` | 266 | 0.3% |
+
+- The six counts add up to 90,966, so every page got exactly one action. Review pool 10,162 (= 7,313 + 2,849) and check pool 1,609 (= 1,001 + 342 + 266) also add up.
+- **Client cap, measured:** uncapped, the top 50 of the review pool has 7 clients and the largest holds **50%**. Capped, it has 9 clients and the largest holds **30%** (the limit). The check queue is also capped (10 clients, largest 30%). The cap works as designed and broadens the queue, but 9 of 37 clients is still narrow.
+- **All 50 review items are `review_ctr_metadata`; none is `review_content_refresh`.** The two click estimates are not on the same footing: missed clicks uses three months of impressions, the slip estimate is a one-month difference. So CTR items come out larger by construction. I have not tested a per-month normalization, so this stays a known issue and not a finding about the data.
+- Cut-offs used: `p_decline` >= 0.634 and `p_low_ctr` >= 0.749 (top 20%), spike threshold 6.27x a page's own monthly average.
+
+=== CELL 14 markdown ===
+### 1c. Top 20 of the review queue (hand review)
+
+For each page: the action, the reason, how strong the evidence is, and **what would make the recommendation wrong**. The "wrong if" line is generated from the page's own numbers, so each row gets a specific doubt, not a generic one. June results are shown only so I can judge the picks by hand; they were never used to build the queue.
+
+=== CELL 15 code ===
+client_share = review_queue["client_hash_id"].value_counts(normalize=True)
+
+def wrong_if(r):
+    notes = []
+    if r["action"] == "review_ctr_metadata" and r["position_tier"] in ("top_3", "page_1"):
+        notes.append("a SERP feature (snippet / AI answer) may be taking the click, so a metadata edit may not help")
+    if r["action"] == "review_content_refresh":
+        notes.append("the drop may be seasonal or a sibling page absorbed the demand; the decline model is only directional")
+    if r["imp_may"] < 150:
+        notes.append("close to the volume floor, so a few lucky days can change the picture")
+    if r["ctr_feat"] == 0:
+        notes.append("zero clicks in 3 months: check the live result page and tracking before editing")
+    if client_share.get(r["client_hash_id"], 0) >= 0.25:
+        notes.append(f"this client is {client_share[r['client_hash_id']]:.0%} of the queue: possible client-wide cause")
+    return " | ".join(notes) if notes else "no red flag in the numbers; still rule out a seasonal drop"
+
+def confidence(r):
+    if r["imp_may"] >= 500 and r["days_with_imp_feat"] >= 60:
+        return "higher (high volume, steady history)"
+    if r["imp_may"] < 100:
+        return "low (near the volume floor)"
+    return "medium"
+
+for i, (_, r) in enumerate(review_queue.head(20).iterrows(), 1):
+    jun = "declined further" if r["y_decline"] == 1 else "did NOT decline"
+    ctr_out = {1.0: "CTR stayed low", 0.0: "CTR recovered"}.get(r["y_low_ctr"], "no CTR label (under 100 June impressions)")
+    print(f"#{i} | {str(r['content_hash_id'])[:10]} | {r['action']} | reason: {r['reason_code']} | model score {r['model_prob']:.2f}")
+    print(f"   imp early/may/jun = {int(r['imp_early'])}/{int(r['imp_may'])}/{int(r['imp_jun'])} | tier {r['position_tier']} | "
+          f"CTR(feat) {r['ctr_feat']:.2f}% vs tier expected {r['tier_expected_ctr']:.2f}%")
+    print(f"   evidence: {r['evidence_strength']}")
+    print(f"   confidence (volume): {confidence(r)}")
+    print(f"   what would make it wrong: {wrong_if(r)}")
+    print(f"   June (hand review only): {jun}; {ctr_out}")
+    print()
+
+=== CELL 16 markdown ===
+### 1c-bis. What the top-20 review showed
+
+- **High-volume pages now.** 16 are `page_1`, 3 are `top_3`, 1 is `striking`; May impressions run from 16,123 to 280,892. The earlier run's top 20 was tiny `deep`-tier pages with zero clicks; the 5-expected-click floor and the click-based ordering removed that problem.
+- **Model scores are no longer saturated:** 0.78 to 0.97, so the model score does not decide the order inside the list (clicks at stake does).
+- **CTR picture:** CTR(feat) is 0.00% to 0.19% against a tier expectation of 0.32% (`page_1`, `striking`) or 0.47% (`top_3`).
+- **June check (hand review only):**
+  - `y_decline`: 14 of 20 declined further (0.70, about the 0.704 base rate). The queue targets CTR, so this is context, not a failure.
+  - `y_low_ctr`: 19 pages have a label (rank 8 had under 100 June impressions); all 19 kept a low CTR. That is 1.00 on 19 pages, but a page far below its tier's CTR for three months stays below it almost automatically. This is persistence, not independent evidence.
+  - Ranks 12 and 17 gained impressions in June (68,836 to 171,004 and 89,535 to 269,943) while CTR stayed low, which fits a CTR problem and not a visibility problem.
+- **What would make it wrong:** 19 of 20 carry the warning that a snippet or AI answer may be taking the click, so a metadata edit may not help. This cannot be tested with this data.
+- **Client concentration:** 6 of 20 carry the "this client is 30% of the queue" note, so even the capped list is led by one or two clients.
+- **Conclusion:** the top of the list is now a reasonable input for human review of CTR/metadata, with the persistence and SERP-feature caveats above. It is not a content-refresh queue.
+
+=== CELL 17 markdown ===
+### 1d. Did the playbook point at the right pages? (graded on June, after the fact)
+
+Everything below is **measured on pages whose clients the model never saw**. The groups are compared with the base rate (what random picking gives) and with the frozen W4 baseline's top 50. `n_labelled` matters: `y_low_ctr` exists only for pages with 100+ June impressions, so a group can have fewer labelled pages than members.
+

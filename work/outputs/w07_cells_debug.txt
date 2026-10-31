@@ -1,0 +1,423 @@
+=== CELL 18 code ===
+def rate(frame, lab):
+    s = frame[lab].dropna()
+    return (round(float(s.mean()), 3) if len(s) else np.nan), int(len(s))
+
+base_top50 = df.sort_values("baseline_action_score", ascending=False).head(50)
+groups_to_grade = [
+    ("all eligible pages (base rate)", df),
+    ("W4 baseline, top 50", base_top50),
+    ("playbook review queue, uncapped top 50", review_uncapped),
+    ("playbook review queue, capped top 50", review_queue),
+    ("  review_ctr_metadata (whole group)", df[df["action"] == "review_ctr_metadata"]),
+    ("  review_content_refresh (whole group)", df[df["action"] == "review_content_refresh"]),
+    ("  check_technical_first (whole group)", df[df["action"] == "check_technical_first"]),
+    ("  verify_data_first (whole group)", df[df["action"] == "verify_data_first"]),
+    ("  verify_then_review (whole group)", df[df["action"] == "verify_then_review"]),
+    ("  monitor_only (whole group)", df[df["action"] == "monitor_only"]),
+]
+rows = []
+for name, frame in groups_to_grade:
+    d_rate, d_n = rate(frame, "y_decline")
+    c_rate, c_n = rate(frame, "y_low_ctr")
+    rows.append({"group": name, "pages": len(frame), "y_decline rate": d_rate, "n_labelled (decline)": d_n,
+                 "y_low_ctr rate": c_rate, "n_labelled (ctr)": c_n})
+grade = pd.DataFrame(rows)
+grade
+
+=== CELL 19 code ===
+df["exp_clicks"] = df["imp_feat"] * df["tier_expected_ctr"] / 100
+df["exp_clicks_bucket"] = pd.cut(df["exp_clicks"], bins=[0, 5, 20, 100, np.inf],
+                                 labels=["<5", "5-20", "20-100", "100+"], right=False)
+
+def strata(col, min_n=50):
+    lab = df[df["y_low_ctr"].notna()]
+    grp = lab[lab["action"] == "review_ctr_metadata"]
+    a = grp.groupby(col, observed=True)["y_low_ctr"].agg(rate="mean", n="size")
+    b = lab.groupby(col, observed=True)["y_low_ctr"].agg(base_rate="mean", n_all="size")
+    t = a.join(b, how="left")
+    t["lift"] = t["rate"] / t["base_rate"]
+    t.loc[t["n"] < min_n, ["rate", "lift"]] = np.nan   # too few rows: no verdict
+    return t.round(3)
+
+display(strata("position_tier"))
+display(strata("exp_clicks_bucket"))
+
+=== CELL 20 code ===
+act = df["action"].value_counts()
+print(f"Pages: {len(df):,} from {df['client_hash_id'].nunique()} clients")
+print("Actions:", {k: f"{v:,} ({v/len(df):.1%})" for k, v in act.items()})
+print(f"Review pool {len(review_pool):,} | check pool {len(check_pool):,}")
+
+for name, q in [("review capped", review_queue), ("review uncapped", review_uncapped)]:
+    s = q["client_hash_id"].value_counts(normalize=True)
+    lab = q["y_low_ctr"].dropna()
+    exp = (q["imp_feat"] * q["tier_expected_ctr"] / 100).min()
+    print(f"{name}: {len(q)} pages | {q['client_hash_id'].nunique()} clients | largest client {s.iloc[0]:.0%} | "
+          f"y_low_ctr {lab.mean():.3f} (n={len(lab)}) | y_decline {q['y_decline'].mean():.3f} | min expected clicks {exp:.1f}")
+print("review queue by action:", review_queue["action"].value_counts().to_dict())
+
+t20 = review_queue.head(20)
+print("top-20 tiers:", t20["position_tier"].value_counts().to_dict())
+print("top-20 median May impressions:", int(t20["imp_may"].median()),
+      "| zero-click share:", round((t20["ctr_feat"] == 0).mean(), 2))
+print("top-20 y_decline:", round(t20["y_decline"].mean(), 3),
+      "| y_low_ctr:", round(t20["y_low_ctr"].dropna().mean(), 3), "n =", int(t20["y_low_ctr"].notna().sum()))
+
+=== CELL 21 markdown ===
+### 1d-bis. Reading the grading table
+
+All rates are measured on pages whose clients the model never saw. Base rates: `y_decline` 0.704, `y_low_ctr` 0.570.
+
+| Group | Pages | `y_decline` | `y_low_ctr` (n labelled) |
+|---|---:|---:|---:|
+| all eligible pages (base rate) | 90,966 | 0.704 | 0.570 (65,088) |
+| `review_ctr_metadata` | 7,313 | 0.767 | 0.892 (7,234) |
+| `review_content_refresh` | 2,849 | 0.842 | 0.173 (2,839) |
+| `check_technical_first` | 1,001 | 0.544 | 0.634 (571) |
+| `verify_data_first` | 342 | 0.734 | 0.704 (314) |
+| `verify_then_review` | 266 | 0.695 | 0.701 (224) |
+| `monitor_only` | 79,195 | 0.696 | 0.546 (53,906) |
+
+- **`review_ctr_metadata`:** `y_low_ctr` 0.892, 1.57x the base rate, on a large group. The strata tables show the lift is not carried by one corner: `page_1` 0.897 (1.55x, n 5,887), `striking` 0.871 (1.56x, n 1,228), `top_3` 0.938 (1.62x, n 96), and by expected clicks 5-20: 0.837 (1.63x), 20-100: 0.896 (1.74x), 100+: 0.946 (1.47x). `page_3_5` has only 23 labelled pages, so no verdict. Still partly persistence of an existing gap (W6 ablation).
+- **`review_content_refresh`:** `y_decline` 0.842, 1.20x the base rate. Positive but modest, and W6 showed this outcome is not stable across folds, so it stays **directional**. Its `y_low_ctr` of 0.173 is not relevant: that action targets decline, not CTR.
+- **`check_technical_first`:** `y_decline` 0.544, *below* the base rate. Pages whose May already collapsed have less left to lose. That supports routing them to a technical check, but it also shows this rule is not a decline predictor.
+- **`verify_data_first` and `verify_then_review`:** about 0.70 to 0.73 on both outcomes, close to the base rates. Nothing special in June, which fits "measurement suspicion" and not "real signal".
+- **`monitor_only`:** `y_decline` 0.696 and `y_low_ctr` 0.546, both at or below the base rates. The pages the playbook leaves alone are not worse than average.
+
+How to read these numbers:
+
+- W4 precision@K ranked only labelled pages first and then took the top K; here, the top 50 is taken first and unlabelled pages are dropped after. The code below prints both views side by side.
+- W4 values are on all eligible pages; the W5/W6 values are means over 5 client-grouped folds. The code below prints both versions side by side.
+
+- **Top-50 queues vs the frozen W4 baseline:**
+
+| Group | `y_decline` | `y_low_ctr` (n labelled) |
+|---|---:|---:|
+| W4 baseline, top 50 | 0.660 | 0.761 (46) |
+| playbook review, uncapped | 0.680 | 0.980 (49) |
+| playbook review, capped | 0.680 | 0.959 (49) |
+
+On `y_low_ctr` the playbook queue is about 20 points above the baseline (0.96 vs 0.76), but with 46 to 49 labelled pages, no interval, and the persistence caveat, I read it as directional. On `y_decline` it is at or below the base rate: do not sell this queue as a decline detector.
+
+=== CELL 22 code ===
+baseline_variants = []
+for lab in ["y_decline", "y_low_ctr"]:
+    w4_sub = df[df[lab].notna()].copy()
+    w4_top = w4_sub.sort_values("baseline_action_score", ascending=False).head(50)
+    here_top = df.sort_values("baseline_action_score", ascending=False).head(50).copy()
+    here_lab = here_top[here_top[lab].notna()]
+    baseline_variants.append({
+        "label": lab,
+        "W4_precision@50_on_labelled_pages": float(w4_top[lab].mean()),
+        "this_notebook_top50_then_drop_unlabelled": float(here_lab[lab].mean()) if len(here_lab) else np.nan,
+        "W4_n_labelled": int(w4_top[lab].notna().sum()),
+        "this_notebook_n_labelled": int(here_lab[lab].notna().sum()),
+    })
+
+baseline_compare = pd.DataFrame(baseline_variants)
+print("Baseline P@50 comparison: W4 labelled-first vs this notebook top-50-then-drop-unlabelled")
+display(baseline_compare[["label", "W4_precision@50_on_labelled_pages", "this_notebook_top50_then_drop_unlabelled", "W4_n_labelled", "this_notebook_n_labelled"]])
+
+
+=== CELL 23 markdown ===
+## 2b. Cost and value
+
+This is a simple decision-support estimate for one month. It is not a monetary model and it does not claim that a review or a technical check will cause recovery.
+
+
+=== CELL 24 code ===
+REVIEW_MINUTES_PER_PAGE = 12  # assumption: one human review takes about 12 minutes
+
+base_rate = float(df["y_low_ctr"].mean())
+base_top50 = df.sort_values("baseline_action_score", ascending=False).head(CAPACITY).copy()
+
+rows = []
+for name, q in [("playbook review queue, capped top 50", review_queue), ("W4 baseline, top 50", base_top50), ("random pick, 50", None)]:
+    if name == "random pick, 50":
+        reviewed_pages = CAPACITY
+        labelled_n = CAPACITY
+        rate = base_rate
+        expected_true_low_ctr = rate * labelled_n
+    else:
+        reviewed_pages = len(q)
+        labelled = q["y_low_ctr"].notna()
+        labelled_n = int(labelled.sum())
+        rate = float(q.loc[labelled, "y_low_ctr"].mean()) if labelled_n else np.nan
+        expected_true_low_ctr = rate * labelled_n if labelled_n else np.nan
+    hours = reviewed_pages * REVIEW_MINUTES_PER_PAGE / 60.0
+    wasted = reviewed_pages - expected_true_low_ctr if pd.notna(expected_true_low_ctr) else np.nan
+    rows.append({
+        "group": name,
+        "reviewed_pages": reviewed_pages,
+        "labelled_n": labelled_n,
+        "rate": rate,
+        "expected_true_low_ctr": expected_true_low_ctr,
+        "reviewer_hours": hours,
+        "wasted_review_pages": wasted,
+    })
+
+cost_table = pd.DataFrame(rows)
+cost_table["expected_true_low_ctr"] = cost_table["expected_true_low_ctr"].round(2)
+cost_table["wasted_review_pages"] = cost_table["wasted_review_pages"].round(2)
+print("Cost and value, y_low_ctr proxy (top-50 review budget, one month)")
+display(cost_table[["group", "reviewed_pages", "labelled_n", "rate", "expected_true_low_ctr", "reviewer_hours", "wasted_review_pages"]].round({"rate": 3, "reviewer_hours": 2, "expected_true_low_ctr": 2, "wasted_review_pages": 2}))
+
+
+=== CELL 25 markdown ===
+A wrong call spends reviewer time on a page that should not have been seen first, and a human can still make a bad edit if they skip the check. A false technical-check route also costs time on the data or engineering review and can delay a real issue, because the same reviewer budget is now tied up elsewhere. These are decision-support estimates on one month, not a forecast or a business-case model.
+
+
+=== CELL 26 markdown ===
+## 2. Intended use and limits
+
+**Who uses it, for what.** A content or SEO analyst with a limited review budget (this project assumes about 50 pages per cycle). The playbook gives them an **ordered list of pages worth looking at first**, one action and one reason per page, and a second short list of pages to **check for data or technical problems before anyone edits content**. It is **decision-support**: a person reviews every item before any change.
+
+**What was measured (W4-W6, one month of outcomes, 37 clients, 90,966 pages, client-grouped 5-fold CV):**
+- `y_low_ctr` (June CTR stays below the tier's expectation): base rate 0.566. Forest Precision@50 0.972 vs 0.756 for the frozen rule; ahead in 5/5 folds (90% bootstrap interval of the difference +0.120 to +0.312) and in 16/17 clients on within-client AUC.
+- `y_decline` (June impressions below 80% of May): base rate 0.701. Forest Precision@50 0.852 vs 0.764 for the rule, but ahead in only 3/5 folds, interval -0.008 to +0.220 (includes zero), and one fold carries the average. This is **directional only**.
+- Random-row split inflated the forest on `y_decline` (P@50 1.000 vs 0.852 grouped), so all numbers here use the grouped split.
+
+**Known limits (carried from W4-W6, re-stated here so the playbook cannot be read without them):**
+- **Persistence.** Part of the `y_low_ctr` skill is a page keeping a CTR gap it already had. Without the CTR features the ranking quality over the whole list drops (AUC 0.760 to 0.624); the top of the list stays easy (P@50 0.944).
+- **Weak decline model.** For `y_decline` the momentum signal (`slip`) adds little beyond exposure and position (W6 ablation), and absolute AUC is about 0.60. So `review_content_refresh` is labelled **directional** in every output.
+- **Client concentration.** In W6, four of five folds had a top 50 that was 84-100% one client. Here the review queue is capped at 30% per client: uncapped it has 7 clients with the largest at 50%, capped it has 9 clients with the largest at 30%.
+- **One month, one portfolio.** No seasonality, no later month, no uncertainty on single-month P@K.
+- **Not causal.** The queue says which pages look worth reviewing first. It does **not** claim that a refresh or a metadata edit will cause recovery.
+- **Model scores are for ranking, not probabilities.** The forest uses balanced class weights, so predicted values sit below real rates (seen in W5).
+
+=== CELL 27 markdown ===
+### 2c. Rule-based archetypes
+
+These "archetypes" are rule-based page types (CTR-gap page, slipping page, suspicious-data page), not clusters. They are a way to read the queue by the rule that produced each action.
+
+For a human, the meaning is straightforward: a CTR-gap page is a metadata check, a slipping page is a decay / refresh insight, and a page with collapsed May goes to a technical check first rather than a content rewrite.
+
+
+=== CELL 28 code ===
+archetype_table = (
+    df.groupby(["reason_code", "position_tier", "action"], observed=True)
+      .agg(
+          n=("content_hash_id", "size"),
+          evidence_strength=("evidence_strength", "first")
+      )
+      .reset_index()
+      .sort_values(["reason_code", "position_tier", "n"], ascending=[True, True, False])
+      .reset_index(drop=True)
+)
+print("Rule-based archetype map: reason_code x position_tier x action")
+display(archetype_table[["reason_code", "position_tier", "action", "n", "evidence_strength"]])
+
+
+=== CELL 29 markdown ===
+## 3. Human review + the no-go list
+
+**The queue never authorizes a change by itself.** It only orders candidates for a person to accept or reject.
+
+### No-go list
+
+| # | Policy | Why | Status |
+|---|---|---|---|
+| 1 | Pages below the volume floor (under 100 March-April or under 50 May impressions) are never scored | CTR and trend are noise at tiny volume | **Enforced** upstream in W4 |
+| 2 | Pages with fewer than 5 expected clicks (March-May impressions x tier-expected CTR) are never sent to review | A CTR gap cannot be measured on so few expected clicks (the earlier top 20 was full of such pages) | **Enforced** in `playbook_action()` |
+| 3 | Average position below 1, or zero clicks on 5,000+ impressions, go to `verify_data_first`, never to a review action | Not a real position / possible tracking gap | **Enforced** in `playbook_action()` |
+| 4 | Extreme rises (99th percentile of rising pages) go to `verify_then_review` | More likely an artifact than real growth | **Enforced** in `playbook_action()` |
+| 5 | May impressions down 90%+ go to `check_technical_first` | De-indexing, redirect or tracking change look like a content problem | **Enforced** in `playbook_action()` |
+| 6 | No client fills more than 30% of one review queue | W6: a queue that is one client mostly measures that client | **Enforced** by `capped_top()` and checked below |
+| 7 | `review_content_refresh` is always shown as *directional* and is never auto-applied | `y_decline` edge was not stable across folds | **Enforced** by the `evidence_strength` column |
+| 8 | No sentence of the form "doing X will increase Y" in any output or paper | Observational data, no experiment | **Policy** (see `writing-honest-claims`) |
+| 9 | Raw queries, URLs, titles and client names are never shown | Public-safety rules in `DATA_USE.md` | **Policy**, nothing in this release contains them |
+
+### Human review checklist (per item, before acting)
+
+- Does the reason fit what I see on the live page and in the search result?
+- Is a sibling page of the same site absorbing the demand (consolidation)?
+- Is there a seasonal or campaign explanation for the drop?
+- For a CTR item: does a snippet, answer box or AI answer take the click?
+- Is this client already over-represented in this cycle's queue?
+- Did I rule out tracking and indexing problems (for every `check_` and `verify_` item, this comes first)?
+
+=== CELL 30 code ===
+# Automatic check behind policy #5, run on the queues the playbook produced
+def pre_release_checks(q, max_client_share=CLIENT_CAP):
+    issues = []
+    if len(q) == 0:
+        return ["queue is empty"]
+    top = q["client_hash_id"].value_counts(normalize=True)
+    if top.iloc[0] > max_client_share + 1e-9:
+        issues.append(f"one client holds {top.iloc[0]:.0%} of the queue (limit {max_client_share:.0%})")
+    if q["model_prob"].isna().any():
+        issues.append("some pages have no model score")
+    review_mask = q["action"].isin(["review_ctr_metadata", "review_content_refresh"])
+    if (q.loc[review_mask, "pos_feat"] < 1).any():
+        issues.append("pages with position below 1 are in the review list")
+    if q["action"].isin(["review_ctr_metadata", "review_content_refresh"]).any() and \
+       q.loc[q["action"].isin(["review_ctr_metadata", "review_content_refresh"]), "slip"].ge(SLIP_COLLAPSE).any():
+        issues.append("a review item has a collapsed May (should have been routed to a technical check)")
+    return issues or ["ok"]
+
+for name, q in [("review queue, uncapped", review_uncapped), ("review queue, capped", review_queue), ("check queue, capped", check_queue)]:
+    print(f"{name:24s}: {pre_release_checks(q)}")
+
+=== CELL 31 markdown ===
+### 3-bis. What the pre-release check showed
+
+- **Uncapped review queue:** the check fails (`one client holds 50% of the queue, limit 30%`). That proves the check does catch the W6 problem.
+- **Capped review queue:** `ok`.
+- **Check queue:** `ok`. The position-below-1 test applies to review items only, so pages routed to `verify_data_first` on purpose no longer look like a failure.
+- The check does not test the expected-click floor or the tier mix. The floor is enforced in `playbook_action()`, so it cannot be bypassed there, but an extra assertion in this function would make the policy visible in the release check as well.
+
+=== CELL 32 markdown ===
+## 4. Monitoring / retrain triggers
+
+**Two clocks.** The playbook can go stale in two different ways, and they are noticed at different times.
+
+**Pre-release (before a queue reaches a reviewer): data looks the same as when the model was built.**
+- Row count and columns match expectations (`need` set in Section 0).
+- `pre_release_checks()` returns `ok` (client share, missing scores, impossible positions).
+- No feature has drifted far from the population the model was trained on. Below, a PSI check (population stability index: how much a distribution moved; rule of thumb, not a law: under 0.1 small, 0.1-0.25 moderate, over 0.25 large). In this one-month release there is no "next month" to compare against, so the demonstration compares the **largest client against all other clients**: the same kind of shift a new client would bring, which is exactly what W6 showed matters.
+
+**Post-label (after the next month's real outcomes are known).**
+- Recompute Precision@50 for the model and for the frozen baseline on the new month, and the new base rate.
+- If the base rate shifts materially, treat the next queue as provisional.
+- **Retrain / fall-back trigger (proposed policy, not yet running):** if the model's Precision@50 is below the baseline's for **two consecutive labelled periods**, fall back to the rule-only queue until the model is retrained. Complexity has to keep earning its place.
+
+=== CELL 33 code ===
+def psi(ref, new, bins=10):
+    ref, new = pd.Series(ref).dropna(), pd.Series(new).dropna()
+    edges = np.unique(np.quantile(ref, np.linspace(0, 1, bins + 1)))
+    if len(edges) < 3:
+        return np.nan
+    edges[0], edges[-1] = -np.inf, np.inf
+    r = np.histogram(ref, edges)[0] / len(ref)
+    n = np.histogram(new, edges)[0] / len(new)
+    r, n = np.clip(r, 1e-4, None), np.clip(n, 1e-4, None)
+    return float(np.sum((n - r) * np.log(n / r)))
+
+big = df["client_hash_id"].value_counts().index[0]
+is_big = (df["client_hash_id"] == big).to_numpy()
+print(f"Largest client = {is_big.mean():.0%} of all eligible pages ({is_big.sum():,} rows). PSI of that client vs all others:")
+drift_rows = []
+for col in ["log_imp_feat", "log_pos_feat", "log_ctr_feat", "slip", "ctr_gap", "days_with_imp_feat"]:
+    v = psi(X.loc[~is_big, col], X.loc[is_big, col])
+    drift_rows.append({"feature": col, "PSI": round(v, 3),
+                       "reading": "large" if v > 0.25 else ("moderate" if v > 0.10 else "small")})
+pd.DataFrame(drift_rows)
+
+=== CELL 34 code ===
+# Post-label machinery: the same check that would run on a new month, here run on the 5 held-out folds
+def p_at_k(y, s, k):
+    order = np.argsort(-np.asarray(s), kind="stable")[:k]
+    return float(np.asarray(y)[order].mean())
+
+rows = []
+for lab, pcol in [("y_decline", "p_decline"), ("y_low_ctr", "p_low_ctr")]:
+    for f in range(1, 6):
+        te = df[(fold_of == f) & df[lab].notna().to_numpy()]
+        row = {"label": lab, "fold": f, "n_test": len(te), "base_rate": float(te[lab].mean())}
+        for k in KS:
+            row[f"model P@{k}"] = p_at_k(te[lab], te[pcol], k)
+            row[f"baseline P@{k}"] = p_at_k(te[lab], te["baseline_action_score"], k)
+        rows.append(row)
+fold_pk = pd.DataFrame(rows)
+
+# Re-check against W6's headline numbers (grouped CV, forest vs frozen rule)
+w6_ref = {("y_decline", 50): (0.852, 0.764), ("y_low_ctr", 50): (0.972, 0.756)}
+for (lab, k), (m_ref, b_ref) in w6_ref.items():
+    s = fold_pk[fold_pk.label == lab]
+    m, b = s[f"model P@{k}"].mean(), s[f"baseline P@{k}"].mean()
+    flag = "matches W6" if abs(m - m_ref) < 0.01 and abs(b - b_ref) < 0.01 else "DIFFERS from W6: investigate"
+    print(f"{lab} P@{k}: model {m:.3f} (W6 {m_ref}) | baseline {b:.3f} (W6 {b_ref}) -> {flag}")
+
+def fallback_trigger(model_vals, base_vals, periods=2):
+    below = [m < b for m, b in zip(model_vals, base_vals)]
+    run = best = 0
+    for x in below:
+        run = run + 1 if x else 0
+        best = max(best, run)
+    return best >= periods, below
+
+print("\nFall-back rule (model P@50 below baseline P@50 for 2 periods in a row), shown on folds.")
+print("Folds are NOT consecutive months: this only demonstrates how the rule behaves.")
+for lab in LABELS:
+    s = fold_pk[fold_pk.label == lab]
+    fire, below = fallback_trigger(s["model P@50"], s["baseline P@50"])
+    print(f"  {lab}: model below baseline per fold = {below} -> trigger fires: {fire}")
+
+=== CELL 35 markdown ===
+### 4-bis. What the monitoring section showed
+
+- **Post-label machinery reproduces W6:** `y_decline` P@50 model 0.852 vs baseline 0.764 and `y_low_ctr` P@50 0.972 vs 0.756, both matching W6. The fold-level code that would run on a new month gives the same numbers as the audit.
+- **PSI (drift) demo, largest client vs all others:** the largest client is 24% of all pages (22,115 rows). `log_imp_feat` 0.011, `ctr_gap` 0.046, `days_with_imp_feat` 0.059 and `log_ctr_feat` 0.031 are small; `log_pos_feat` 0.167 and `slip` 0.226 are moderate, with `slip` close to the 0.25 "large" line. Reading: a client that looks like this one would shift the momentum and position features most, and `slip` is the feature W6 found adds little. PSI thresholds are a rule of thumb, not a test.
+- **Fall-back rule demo:** for `y_decline` the model is below the baseline in folds 2 and 5 (`[False, True, False, False, True]`) but never twice in a row, so the trigger does not fire; for `y_low_ctr` it is never below. Folds are not consecutive months, so this only shows how the rule behaves. It also shows the weakness of the rule for `y_decline`: the model loses to the baseline in 2 of 5 folds without ever tripping it.
+
+=== CELL 36 markdown ===
+## 5. Exports for the paper
+
+Writes the ranked queue and the two short queues to `work/outputs/` (CSV files under `work/` are gitignored on purpose: they hold pseudonymous IDs and must not be committed) and two **figures without any IDs** to `work/figures/` (safe to commit and to embed in the paper). The figures use the client-grouped fold results, so they show the honest numbers, not the in-sample ones from the starter-CSV version.
+
+=== CELL 37 code ===
+export_cols = ["playbook_rank", "client_hash_id", "content_hash_id", "action", "action_why", "evidence_strength",
+               "reason_code", "model_prob", "p_decline", "p_low_ctr", "baseline_action_score", "rank",
+               "imp_early", "imp_may", "recent_ratio", "slip", "ctr_feat", "tier_expected_ctr", "ctr_gap",
+               "position_tier", "pos_feat", "days_with_imp_feat", "imp_jun", "y_decline", "y_low_ctr"]
+ranked[export_cols].to_csv(OUT / "action_playbook_queue.csv", index=False)
+review_queue[export_cols].to_csv(OUT / "action_playbook_review_top50.csv", index=False)
+check_queue[export_cols].to_csv(OUT / "action_playbook_check_top50.csv", index=False)
+print(f"Wrote {len(ranked):,} rows to action_playbook_queue.csv, plus the two top-50 files in work/outputs/")
+
+# Figure 1: Precision@K, model vs frozen baseline vs base rate (mean over the 5 client-grouped folds)
+fig, axes = plt.subplots(1, 2, figsize=(11, 4.2), sharey=True)
+for ax, lab in zip(axes, LABELS):
+    s = fold_pk[fold_pk.label == lab]
+    ax.plot(KS, [s[f"model P@{k}"].mean() for k in KS], marker="o", label="random forest (held-out clients)")
+    ax.plot(KS, [s[f"baseline P@{k}"].mean() for k in KS], marker="s", label="frozen W4 rule")
+    ax.axhline(s["base_rate"].mean(), color="gray", linestyle="--", label=f"base rate ({s['base_rate'].mean():.2f})")
+    ax.set_title(lab); ax.set_xlabel("K"); ax.set_xticks(list(KS)); ax.set_ylim(0.3, 1.05)
+axes[0].set_ylabel("Precision@K"); axes[0].legend(loc="lower left", fontsize=8)
+fig.suptitle("Precision@K, 5-fold client-grouped CV, mean over folds (one month of outcomes)")
+fig.tight_layout()
+fig.savefig(FIG / "precision_at_k.svg", bbox_inches="tight")
+plt.show()
+
+# Figure 2: action mix across all eligible pages
+mix = df["action"].value_counts().sort_values()
+fig, ax = plt.subplots(figsize=(8, 4))
+mix.plot(kind="barh", ax=ax)
+ax.set_title("Playbook action mix (all eligible pages)"); ax.set_xlabel("pages")
+for i, v in enumerate(mix.values):
+    ax.text(v, i, f" {v:,}", va="center", fontsize=8)
+fig.tight_layout()
+fig.savefig(FIG / "action_mix.svg", bbox_inches="tight")
+plt.show()
+print("Wrote work/figures/precision_at_k.svg and work/figures/action_mix.svg")
+
+=== CELL 38 markdown ===
+### 5-bis. What was exported, and status of the issues found earlier
+
+**Exported:** `action_playbook_queue.csv` (90,966 rows), the two top-50 files in `work/outputs/` (gitignored: pseudonymous IDs), and two ID-free figures in `work/figures/`: `precision_at_k.svg` (model vs frozen rule vs base rate, client-grouped) and `action_mix.svg`. Both figures overwrite the earlier starter-CSV versions, which is intended: the old ones were in-sample.
+
+| # | Issue found earlier | Status now |
+|---|---|---|
+| 1 | Low-volume noise in the review queue | **Resolved.** 5-expected-click floor and click-based ordering; top 20 are high-volume `page_1` / `top_3` pages |
+| 2 | Two probabilities on one list | **Partly resolved.** Review items are ranked by estimated clicks, not by model score, but all 50 are CTR items because the CTR estimate covers three months and the slip estimate one month. Not tested with a per-month normalization |
+| 3 | Client cap too loose to broaden the queue | **Partly resolved.** 9 clients instead of 5-7, largest client 30%, but still 9 of 37 |
+| 4 | `y_low_ctr` partly persistence | **Open, inherent.** 19/19 labelled top-20 pages stayed low; reported as persistence, not discovered signal |
+| 5 | `supported` label from the whole group only | **Resolved for the group.** Lift 1.47x to 1.74x in every tier / expected-click stratum with n >= 50. Not computed per client |
+| 6 | Pre-release check flagged the check queue | **Resolved.** Position test is limited to review items |
+
+**Still open for the paper:** no confidence interval on any single-month rate; no content-refresh items in the top 50; the decline outcome is not better than base rate in the top 50 (0.680 vs 0.704).
+
+**Safe wording for the paper right now (decision-support, observed):** *"On clients the model had not seen, pages routed to `review_ctr_metadata` showed a June CTR below their tier's expectation more often than average (0.89 vs 0.57), in every position tier and expected-click stratum with enough pages; part of this is persistence of an existing CTR gap. Pages routed to `review_content_refresh` declined slightly more often than average (0.84 vs 0.70), which is directional only. The top-50 review queue is a CTR/metadata queue and is not a decline detector. These results are from one month and one portfolio and do not show that editing a page improves it."*
+
+=== CELL 39 markdown ===
+## Self-check
+
+Before you submit, confirm each line honestly:
+
+- [ ] Every section above is filled — markdown thinking AND the code that backs it
+- [ ] The notebook runs top to bottom with no errors (Runtime → Run all)
+- [ ] No client names, URLs, or private queries anywhere
+- [ ] My claims use careful words: observed, measured, directional, decision-support
+- [ ] Committed to my repo under `work/notebooks/` — then submit your repo URL on the card. Done.
+

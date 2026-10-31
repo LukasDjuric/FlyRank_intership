@@ -1,0 +1,118 @@
+{
+  "action_counts": {
+    "check_technical_first": 1001,
+    "monitor_only": 79195,
+    "review_content_refresh": 2849,
+    "review_ctr_metadata": 7313,
+    "verify_data_first": 342,
+    "verify_then_review": 266
+  },
+  "base_rates": {
+    "y_decline": 0.7044280280544379,
+    "y_low_ctr": 0.5701972713864307
+  },
+  "grading_table": [
+    {
+      "group": "all eligible pages (base rate)",
+      "n_labelled (ctr)": 65088,
+      "n_labelled (decline)": 90966,
+      "pages": 90966,
+      "y_decline rate": 0.704,
+      "y_low_ctr rate": 0.57
+    },
+    {
+      "group": "W4 baseline, top 50",
+      "n_labelled (ctr)": 46,
+      "n_labelled (decline)": 50,
+      "pages": 50,
+      "y_decline rate": 0.66,
+      "y_low_ctr rate": 0.761
+    },
+    {
+      "group": "playbook review queue, uncapped top 50",
+      "n_labelled (ctr)": 49,
+      "n_labelled (decline)": 50,
+      "pages": 50,
+      "y_decline rate": 0.68,
+      "y_low_ctr rate": 0.98
+    },
+    {
+      "group": "playbook review queue, capped top 50",
+      "n_labelled (ctr)": 49,
+      "n_labelled (decline)": 50,
+      "pages": 50,
+      "y_decline rate": 0.68,
+      "y_low_ctr rate": 0.959
+    },
+    {
+      "group": "  review_ctr_metadata (whole group)",
+      "n_labelled (ctr)": 7234,
+      "n_labelled (decline)": 7313,
+      "pages": 7313,
+      "y_decline rate": 0.767,
+      "y_low_ctr rate": 0.892
+    },
+    {
+      "group": "  review_content_refresh (whole group)",
+      "n_labelled (ctr)": 2839,
+      "n_labelled (decline)": 2849,
+      "pages": 2849,
+      "y_decline rate": 0.842,
+      "y_low_ctr rate": 0.173
+    },
+    {
+      "group": "  check_technical_first (whole group)",
+      "n_labelled (ctr)": 571,
+      "n_labelled (decline)": 1001,
+      "pages": 1001,
+      "y_decline rate": 0.544,
+      "y_low_ctr rate": 0.634
+    },
+    {
+      "group": "  verify_data_first (whole group)",
+      "n_labelled (ctr)": 314,
+      "n_labelled (decline)": 342,
+      "pages": 342,
+      "y_decline rate": 0.734,
+      "y_low_ctr rate": 0.704
+    },
+    {
+      "group": "  verify_then_review (whole group)",
+      "n_labelled (ctr)": 224,
+      "n_labelled (decline)": 266,
+      "pages": 266,
+      "y_decline rate": 0.695,
+      "y_low_ctr rate": 0.701
+    },
+    {
+      "group": "  monitor_only (whole group)",
+      "n_labelled (ctr)": 53906,
+      "n_labelled (decline)": 79195,
+      "pages": 79195,
+      "y_decline rate": 0.696,
+      "y_low_ctr rate": 0.546
+    }
+  ],
+  "library_versions": {
+    "matplotlib": "3.10.9",
+    "numpy": "2.2.6",
+    "pandas": "2.3.3",
+    "python": "3.10.11",
+    "scikit_learn": "1.7.2"
+  },
+  "queue_stats": {
+    "capacity": 50,
+    "check_queue_pages": 50,
+    "client_cap": 0.3,
+    "min_expected_clicks": 5,
+    "review_pool_pages": 10162,
+    "review_queue_pages": 50,
+    "review_uncapped_pages": 50
+  },
+  "seed": 42,
+  "thresholds": {
+    "client_cap": 0.3,
+    "high_score": 0.8,
+    "slip_collapse": 0.9
+  }
+}
