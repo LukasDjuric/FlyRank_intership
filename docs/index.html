@@ -1,0 +1,458 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Which pages should an editor review first? Ranking CTR opportunities in search data</title>
+<meta name="description" content="A research page on ranking web pages for click-through-rate review using 90,966 pages of pseudonymized Google Search Console data, a transparent rule baseline, and client-grouped validation.">
+<meta property="og:title" content="Which pages should an editor review first? Ranking CTR opportunities in search data">
+<meta property="og:description" content="Rule vs random forest on held-out clients, with leakage checks, a ranked action playbook and an honest list of what the data cannot say.">
+<meta property="og:type" content="article">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,600;1,6..72,400&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#F3F5F7;--panel:#FFFFFF;--ink:#1C2630;--muted:#55626C;--rule:#D3DAE0;--model:#0A6C74;--rulec:#A9650F;--base:#66727C;--mark:#E3F0F1;--warnbg:#FBEFE0;}
+@media (prefers-color-scheme:dark){:root{--bg:#10161B;--panel:#18212A;--ink:#E3E8EC;--muted:#9AA7B2;--rule:#2C3944;--model:#52C2C9;--rulec:#E1A64F;--base:#8C99A5;--mark:#16303A;--warnbg:#2A2214;}}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth;scroll-padding-top:1rem}
+@media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:"Newsreader",Georgia,"Times New Roman",serif;font-size:1.125rem;line-height:1.62;-webkit-text-size-adjust:100%}
+.sans,table,figcaption,nav,.meta,dl,.note{font-family:"Atkinson Hyperlegible",system-ui,-apple-system,"Segoe UI",sans-serif}
+a{color:var(--model);text-underline-offset:.15em}
+a:focus-visible,summary:focus-visible{outline:3px solid var(--rulec);outline-offset:2px;border-radius:2px}
+.skip{position:absolute;left:-999px;top:0;background:var(--panel);padding:.5rem 1rem;z-index:9}
+.skip:focus{left:.5rem;top:.5rem}
+.page{display:grid;grid-template-columns:minmax(0,1fr);max-width:46rem;margin:0 auto;padding:2.5rem 1.25rem 5rem}
+@media (min-width:1120px){.page{grid-template-columns:14rem minmax(0,44rem);max-width:none;justify-content:center;column-gap:3rem}}
+nav.toc{display:none}
+@media (min-width:1120px){nav.toc{display:block;position:sticky;top:2rem;align-self:start;font-size:.9rem;line-height:1.35}}
+nav.toc p{margin:0 0 .6rem;color:var(--muted)}
+nav.toc ol{list-style:none;margin:0;padding:0}
+nav.toc li{margin:0 0 .5rem}
+nav.toc a{color:var(--ink);text-decoration:none;border-left:2px solid var(--rule);padding-left:.7rem;display:block}
+nav.toc a:hover{border-left-color:var(--model);color:var(--model)}
+main{min-width:0}
+h1{font-size:clamp(2rem,5.2vw,3rem);line-height:1.08;font-weight:600;margin:0 0 1rem;letter-spacing:-.01em}
+h2{font-size:1.65rem;line-height:1.2;font-weight:600;margin:3.2rem 0 .8rem;padding-top:1.4rem;border-top:1px solid var(--rule)}
+h3{font-size:1.2rem;line-height:1.3;font-weight:600;margin:2rem 0 .4rem}
+p{margin:0 0 1rem}
+.meta{color:var(--muted);font-size:.95rem;margin:0 0 .3rem}
+.meta a{color:var(--muted)}
+.abstract{background:var(--panel);border-left:4px solid var(--model);padding:1.1rem 1.3rem 1rem;margin:1.6rem 0 1rem}
+.abstract h2{all:unset;display:block;font-family:"Atkinson Hyperlegible",system-ui,sans-serif;font-weight:700;font-size:1rem;margin:0 0 .5rem}
+.abstract p{margin:0 0 .7rem}.abstract p:last-child{margin:0}
+.scope{background:var(--warnbg);padding:.75rem 1rem;font-size:.95rem;margin:0 0 2rem}
+dl.terms{background:var(--panel);padding:1rem 1.2rem;font-size:.95rem;line-height:1.5;margin:1.2rem 0}
+dl.terms dt{font-weight:700;margin-top:.6rem}dl.terms dt:first-child{margin-top:0}
+dl.terms dd{margin:0}
+figure{margin:1.8rem 0;background:var(--panel);padding:1rem 1rem .6rem}
+figcaption{font-size:.92rem;line-height:1.45;color:var(--muted);margin-top:.5rem}
+figcaption b{color:var(--ink)}
+.panels{display:flex;flex-wrap:wrap;gap:.5rem}
+.panels svg{flex:1 1 17rem;min-width:0}
+.fig-svg{width:100%;height:auto;display:block;font-family:"Atkinson Hyperlegible",system-ui,sans-serif}
+.t-title{font-size:13px;font-weight:700;fill:var(--ink)}
+.t-axis{font-size:11px;fill:var(--muted)}
+.t-lab{font-size:12px;fill:var(--ink)}
+.t-base{font-size:11px;fill:var(--base)}
+.model-t{fill:var(--model);font-weight:700}.rule-t{fill:var(--rulec);font-weight:700}
+.grid{stroke:var(--rule);stroke-width:1}
+.zero{stroke:var(--ink);stroke-width:1.2}
+.base-line{stroke:var(--base);stroke-width:1.3;stroke-dasharray:5 4}
+.whisk{stroke-width:2;opacity:.35}.line{fill:none;stroke-width:1.8}
+.model-s{stroke:var(--model)}.rule-s{stroke:var(--rulec)}
+.model-f{fill:var(--model)}.rule-f{fill:var(--rulec)}
+.dotring{stroke:var(--panel);stroke-width:1.5}
+.ci{fill:var(--model);opacity:.18}.mean{stroke:var(--model);stroke-width:3}
+.link{stroke-width:2.5;opacity:.45}.ring{fill:var(--panel);stroke-width:2.5}
+.tl{stroke:none}.feat1{fill:var(--model);opacity:.85}.feat2{fill:var(--model);opacity:.5}.lab{fill:var(--rulec)}
+.tl-t{fill:#fff;font-weight:700}.cut{stroke:var(--ink);stroke-width:1.5;stroke-dasharray:3 3}
+.tblwrap{overflow-x:auto;margin:1.2rem 0;background:var(--panel)}
+table{border-collapse:collapse;width:100%;font-size:.92rem;line-height:1.35;font-variant-numeric:tabular-nums}
+caption{text-align:left;font-weight:700;padding:.7rem .8rem .3rem;font-size:.95rem}
+th,td{padding:.45rem .8rem;border-bottom:1px solid var(--rule);text-align:left;vertical-align:top}
+th{font-weight:700;border-bottom:2px solid var(--ink);white-space:nowrap}
+td.n,th.n{text-align:right}
+tr.hl td{background:var(--mark);font-weight:700}
+.tag{font-weight:700;white-space:nowrap}
+ul,ol{padding-left:1.3rem;margin:0 0 1rem}li{margin-bottom:.35rem}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.85em;background:var(--mark);padding:.05em .3em;border-radius:3px;word-break:break-word}
+pre{background:var(--panel);padding:.9rem 1rem;overflow-x:auto;font-size:.85rem;line-height:1.45;margin:1rem 0}
+pre code{background:none;padding:0}
+.math{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.9rem;background:var(--panel);padding:.7rem 1rem;margin:1rem 0;overflow-x:auto;white-space:pre}
+footer{margin-top:3rem;padding-top:1.2rem;border-top:1px solid var(--rule);font-size:.95rem;color:var(--muted)}
+@media print{nav.toc,.skip{display:none}body{background:#fff;color:#000}figure,.abstract,table{break-inside:avoid}}
+</style>
+</head>
+<body>
+<a class="skip" href="#main">Skip to the paper</a>
+<div class="page">
+<nav class="toc" aria-label="Contents">
+<p>Contents</p>
+<ol>
+<li><a href="#abstract">Abstract</a></li>
+<li><a href="#intro">Introduction</a></li>
+<li><a href="#data">Data</a></li>
+<li><a href="#method">Methodology</a></li>
+<li><a href="#results">Results</a></li>
+<li><a href="#limits">Limitations</a></li>
+<li><a href="#recs">Ranked recommendations</a></li>
+<li><a href="#repro">Reproducibility</a></li>
+<li><a href="#credit">Acknowledgments and data credit</a></li>
+</ol>
+</nav>
+<main id="main">
+<header>
+<h1>Which pages should an editor review first? Ranking CTR opportunities in search data</h1>
+<p class="meta">Luka Đurić, FlyRank ML Internship 2026 (Applied Search Intelligence track)</p>
+<p class="meta">November 2026. Code and notebooks: <a href="https://github.com/LukasDjuric/FlyRank_intership">GitHub repository</a></p>
+
+<section class="abstract" id="abstract" aria-labelledby="abs-h">
+<h2 id="abs-h">Abstract</h2>
+<p>Out of roughly 91,000 web pages that earn search impressions, which ones should an editor look at first because they get fewer clicks than they should? I used FlyRank’s pseudonymized warehouse release (daily Google Search Console data, March to June 2026, 37 clients), built every feature from March to May only, and graded rankings on two June outcomes, comparing a hand-written rule against logistic regression, a shallow decision tree and a random forest on five folds that hold out whole clients. For the outcome “the page’s CTR stays below what its position normally earns”, the forest placed 0.97 correct pages in its top 50 against 0.76 for the rule (base rate 0.57) and was ahead in all five folds, although part of that skill is persistence of a gap the features already show. For the outcome “the page loses at least 20% of its impressions”, the forest’s 0.85 against 0.76 (base rate 0.70) is directional only: it is ahead in three of five folds and the interval includes zero. I turned the results into a six-action playbook with human-review rules and a client cap, so the queue is a CTR and metadata review list and not a decline detector. This is decision-support evidence from one month; it does not show that editing a page improves it.</p>
+</section>
+<p class="scope"><b>Scope.</b> The project started as “CTR and engagement” scoring. Engagement data (GA4) covers only 4.2% of the March rows, so engagement was not tested and this paper is about CTR. Decline is reported as a second, weaker outcome.</p>
+</header>
+
+<section id="intro">
+<h2>1. Introduction</h2>
+<p>FlyRank publishes content straight into client websites and then watches search data. Content that ranks in Google tends to decay: positions slip, clicks drop, and the team notices late. The valuable decision is small and practical. Out of thousands of pages, which one should a person fix <em>first</em>, given a few hours a week?</p>
+<p>Today the product answers with hand-written rules: thresholds for staleness, volume or CTR. They run in production and they are easy to read. The question for this project is whether a learned ranking, trained on observable search signals and checked honestly, ranks pages better than a transparent rule, and where it does not.</p>
+<p><b>Who acts and what it costs.</b> An editor or SEO analyst reads the ranked list from the top and decides whether to check a title and snippet, check for a technical problem, or leave the page alone. A wrong pick costs review time (about 12 minutes per page is assumed here) and, if someone skips the check, possibly a bad edit. For that reason the output is a list for people, not an automatic action.</p>
+<dl class="terms">
+<dt>CTR (click-through rate)</dt><dd>Clicks divided by impressions. Here it is a percentage, so 0.32 means 0.32%.</dd>
+<dt>Position tier</dt><dd>A page’s average rank in search results, bucketed: top 3, page 1, striking (11–20), pages 3–5, deep. CTR falls with position, so CTR is only compared inside a tier.</dd>
+<dt>Precision@K (P@K)</dt><dd>Of the K pages a ranking puts first, the share that really had the problem. K = 50 means a reviewer with time for 50 pages.</dd>
+<dt>Base rate</dt><dd>The share of all pages that have the problem. Picking pages at random gives a P@K equal to the base rate, so every score is read next to it.</dd>
+<dt>Client-grouped validation</dt><dd>Training on some clients and testing on clients the model never saw, because pages of one client share habits a model can memorize.</dd>
+<dt>Leakage</dt><dd>Information that would not exist at prediction time slipping into the features, which makes scores look better than they are.</dd>
+<dt>Persistence</dt><dd>A page that under-captures clicks for three months tends to keep doing so in the fourth. A model can score well by learning only that.</dd>
+</dl>
+</section>
+
+<section id="data">
+<h2>2. Data</h2>
+<p><b>Source.</b> The FlyRank internship warehouse release (<code>FlyRank/internship-warehouse</code>, build v20260703) on Hugging Face: pseudonymized Google Search Console and Google Analytics data, about 79 million daily rows from January 2025 to June 2026, released with names, domains, URLs, titles and raw queries removed. This paper uses 43.6 million of those rows, from the daily table <code>fact_content_daily_performance</code> (1 March to 30 June 2026), joined to <code>dim_content</code> and <code>dim_clients</code>.</p>
+<p><b>Windows.</b> Features come from March to May. Outcomes come from June, after every feature window.</p>
+<figure>
+<svg viewBox="0 0 420 118" role="img" aria-label="Timeline: March and April are early feature window, May is recent feature window, June is the outcome window." class="fig-svg">
+<rect x="10" y="22" width="196" height="38" class="tl feat1"/>
+<text x="108.0" y="46" class="t-lab tl-t" text-anchor="middle">Mar 1 to Apr 30</text>
+<text x="108.0" y="82" class="t-axis" text-anchor="middle">Early features</text>
+<rect x="210" y="22" width="98" height="38" class="tl feat2"/>
+<text x="259.0" y="46" class="t-lab tl-t" text-anchor="middle">May</text>
+<text x="259.0" y="82" class="t-axis" text-anchor="middle">Recent features</text>
+<rect x="312" y="22" width="94" height="38" class="tl lab"/>
+<text x="359.0" y="46" class="t-lab tl-t" text-anchor="middle">June</text>
+<text x="359.0" y="82" class="t-axis" text-anchor="middle">Outcomes</text>
+<line x1="308" x2="308" y1="12" y2="70" class="cut"/>
+<text x="308" y="106" class="t-axis" text-anchor="middle">nothing after this line is visible to the score</text>
+</svg>
+<figcaption><b>Figure 1.</b> The three windows. The score and the models see only the two dark blocks.</figcaption>
+</figure>
+<p><b>Panel caveat.</b> History depth differs by client, so I kept only clients whose search history starts on or before 1 March and content created before that date. Pages with too little activity to have a measurable CTR were dropped on purpose, and every drop is counted:</p>
+<div class="tblwrap"><table><caption>Which pages are eligible for ranking</caption><thead><tr><th scope="col">Step</th><th scope="col" class="n">Rows</th></tr></thead><tbody><tr><td>Daily fact rows, 2026-03-01 to 2026-06-30</td><td class="n">43,647,556</td></tr><tr><td>Client × content items, from clients with search history by 1 March and content created before it (48 clients)</td><td class="n">296,221</td></tr><tr><td>At least 100 impressions in March–April</td><td class="n">105,959</td></tr><tr><td>At least 50 impressions in May</td><td class="n">90,966</td></tr><tr class="hl"><td>Known average position (<b>final population, 37 clients</b>)</td><td class="n">90,966</td></tr></tbody></table></div>
+<p><b>Checks before any modelling.</b> The daily table has no repeated client–content–date rows in the March slice. Two beliefs behind the rule were tested first:</p>
+<ul>
+<li><b>CTR falls with position: mixed.</b> It drops about 13× from the top 3 to the deep tier, but page 1 and the striking tier are equal (0.320% against 0.323%), so the curve is not strictly monotonic. Tier sizes and values:</li>
+</ul>
+<div class="tblwrap"><table><caption>Expected CTR by position tier (clicks ÷ impressions over March–May, all eligible pages)</caption><thead><tr><th scope="col">Position tier</th><th scope="col" class="n">Pages</th><th scope="col" class="n">Expected CTR</th></tr></thead><tbody><tr><td>top 3</td><td class="n">2,472</td><td class="n">0.474%</td></tr><tr><td>page 1 (4–10)</td><td class="n">38,970</td><td class="n">0.320%</td></tr><tr><td>striking (11–20)</td><td class="n">22,099</td><td class="n">0.323%</td></tr><tr><td>pages 3–5 (21–50)</td><td class="n">22,778</td><td class="n">0.149%</td></tr><tr><td>deep (&gt;50)</td><td class="n">4,647</td><td class="n">0.035%</td></tr></tbody></table></div>
+<ul>
+<li><b>A bigger May slip means more June decline: the opposite.</b> Among the 1,038 pages whose May impressions had collapsed by 90% or more, only 54.0% declined further in June, against 70.4% overall. A collapse that large looks more like a tracking, indexing or URL change than a content problem, which is why the playbook routes those pages to a technical check.</li>
+</ul>
+<p><b>What I left out, and why.</b></p>
+<ul>
+<li>Raw queries, URLs, titles, keywords and client names: not in the release, and never shown here.</li>
+<li>Product decision flags (health score, “needs CTR fix” and similar): not in the release. If rebuilt, they would be baselines, never features.</li>
+<li>Client and content identifiers: used only for joins and for grouping folds, never as features.</li>
+<li>GA4 engagement: usable on only 4.2% of March rows (413,966 of 9,841,378), so not modelled.</li>
+<li>The 90-day query table: its window overlaps June, so its totals would contain the outcome.</li>
+<li>49 pages (0.1%) with an average position below 1, which is not a real search position. They are routed to a data check.</li>
+</ul>
+</section>
+
+<section id="method">
+<h2>3. Methodology</h2>
+<p><b>Unit and outcomes.</b> One row is one page of one client. Two outcomes are measured in June:</p>
+<ul>
+<li><code>y_decline</code>: June impressions are below 80% of May impressions. Base rate 0.704 over 90,966 pages. Seven in ten pages decline by this definition, so there is little room for any ranking to show lift.</li>
+<li><code>y_low_ctr</code>: June CTR is below the expected CTR of the page’s tier, defined only for pages with at least 100 June impressions. Base rate 0.570 over 65,088 labelled pages.</li>
+</ul>
+<p><b>Baseline.</b> A rule a person can read, with no fitted weights, written first and then frozen so the later comparison could not drift:</p>
+<div class="math">slip       = how far May impressions fell below the page's own Mar-Apr monthly average (0 to 1)
+ctr_gap    = how far the page's CTR is below its tier's expected CTR (0 to 1)
+visibility = percentile rank of the page's Mar-May impressions (0 to 1)
+
+score = visibility x (0.5 x slip + 0.5 x ctr_gap)</div>
+<p>Each page also gets one reason code: <code>slipping_visibility</code> if slip is at least the CTR gap, otherwise <code>ctr_below_tier_expected</code>. A second reference ranks pages by visibility alone.</p>
+<p><b>Features.</b> Fifteen, all from March to May: log impressions (March–April, May, total), days with impressions, log average position and tier indicators, log CTR, tier-expected CTR, CTR gap, May-to-early ratio (capped at 5) and slip.</p>
+<p><b>Models.</b> Logistic regression (a readable linear model), a depth-3 decision tree (readable if/else), and a random forest (300 trees, depth 10, at least 50 pages per leaf, balanced class weights). Seed 42 throughout. The forest has to earn its place by beating both the rule and the simpler models on the same rows.</p>
+<p><b>Validation.</b> Five-fold <code>GroupKFold</code> by client, so no client appears in both training and test in the same fold. The fold test sets hold 1, 7, 10, 8 and 11 clients; fold 1 is one single client with 22,115 pages. The rule and the visibility ranking need no training but are scored on the same test rows, fold by fold. I report every fold and not only the average. The primary metric is P@K at K = 20, 50 and 100, next to the base rate, with AUC (how well the whole ranking separates the two groups) as a secondary view.</p>
+<p><b>Leakage checks.</b></p>
+<ul>
+<li>A timeline assertion: no June, outcome, score or identifier column is in the feature set.</li>
+<li>An injected-leak test: adding a June-derived column should push scores toward 1.0. It did, to 1.000 on both outcomes, so the test harness can detect a leak.</li>
+<li>A random-row split run beside the grouped split, to measure how much skill is client memorization.</li>
+<li>Ablations that remove the CTR and momentum features.</li>
+<li>One known mild issue: the tier-expected CTR is computed from March–May of all eligible pages, including pages that later sit in a test fold. It uses no June data, but it is not strictly training-only.</li>
+</ul>
+</section>
+
+<section id="results">
+<h2>4. Results</h2>
+<h3>4.1 The model against the baseline, same rows, same folds</h3>
+<div class="tblwrap"><table><caption>Outcome 2: page’s June CTR stays below its tier’s expectation (base rate 0.570, labelled pages only). Mean over 5 client-grouped folds.</caption><thead><tr><th scope="col">Ranking</th><th scope="col" class="n">P@20</th><th scope="col" class="n">P@50</th><th scope="col" class="n">P@100</th><th scope="col" class="n">AUC</th></tr></thead><tbody><tr><td>Frozen rule (baseline)</td><td class="n">0.70</td><td class="n">0.76</td><td class="n">0.71</td><td class="n">0.590</td></tr><tr><td>Visibility only</td><td class="n">0.63</td><td class="n">0.65</td><td class="n">0.62</td><td class="n">0.432</td></tr><tr><td>Logistic regression</td><td class="n">0.97</td><td class="n">0.94</td><td class="n">0.92</td><td class="n">0.726</td></tr><tr><td>Decision tree, depth 3</td><td class="n">0.96</td><td class="n">0.92</td><td class="n">0.92</td><td class="n">0.713</td></tr><tr class="hl"><td>Random forest</td><td class="n">0.97</td><td class="n">0.97</td><td class="n">0.98</td><td class="n">0.760</td></tr></tbody></table></div>
+<div class="tblwrap"><table><caption>Outcome 1: page loses at least 20% of its May impressions in June (base rate 0.704). Mean over 5 client-grouped folds.</caption><thead><tr><th scope="col">Ranking</th><th scope="col" class="n">P@20</th><th scope="col" class="n">P@50</th><th scope="col" class="n">P@100</th><th scope="col" class="n">AUC</th></tr></thead><tbody><tr><td>Frozen rule (baseline)</td><td class="n">0.77</td><td class="n">0.76</td><td class="n">0.78</td><td class="n">0.533</td></tr><tr><td>Visibility only</td><td class="n">0.69</td><td class="n">0.67</td><td class="n">0.66</td><td class="n">0.488</td></tr><tr><td>Logistic regression</td><td class="n">0.57</td><td class="n">0.64</td><td class="n">0.67</td><td class="n">0.556</td></tr><tr><td>Decision tree, depth 3</td><td class="n">0.80</td><td class="n">0.83</td><td class="n">0.78</td><td class="n">0.540</td></tr><tr class="hl"><td>Random forest</td><td class="n">0.86</td><td class="n">0.85</td><td class="n">0.83</td><td class="n">0.597</td></tr></tbody></table></div>
+<figure>
+<div class="panels"><svg viewBox="0 0 360 290" role="img" aria-label="Precision at K for the outcome CTR stays below tier expectation. Forest 0.97, 0.97, 0.98; rule 0.70, 0.76, 0.71; base rate 0.57." class="fig-svg">
+<text x="40" y="18" class="t-title">Page keeps a low CTR in June</text>
+<line x1="40" x2="282" y1="216.6" y2="216.6" class="grid"/>
+<text x="34" y="220.6" class="t-axis" text-anchor="end">0.4</text>
+<line x1="40" x2="282" y1="157.7" y2="157.7" class="grid"/>
+<text x="34" y="161.7" class="t-axis" text-anchor="end">0.6</text>
+<line x1="40" x2="282" y1="98.8" y2="98.8" class="grid"/>
+<text x="34" y="102.8" class="t-axis" text-anchor="end">0.8</text>
+<line x1="40" x2="282" y1="39.9" y2="39.9" class="grid"/>
+<text x="34" y="43.9" class="t-axis" text-anchor="end">1.0</text>
+<line x1="40" x2="282" y1="166.5" y2="166.5" class="base-line"/>
+<text x="288" y="170.5" class="t-base">base 0.57</text>
+<text x="69.0" y="266" class="t-axis" text-anchor="middle">K = 20</text>
+<text x="161.0" y="266" class="t-axis" text-anchor="middle">K = 50</text>
+<text x="253.0" y="266" class="t-axis" text-anchor="middle">K = 100</text>
+<line x1="62.0" x2="62.0" y1="54.6" y2="231.3" class="whisk rule-s"/>
+<line x1="154.0" x2="154.0" y1="69.3" y2="169.4" class="whisk rule-s"/>
+<line x1="246.0" x2="246.0" y1="75.2" y2="198.9" class="whisk rule-s"/>
+<polyline points="62.0,128.2 154.0,111.7 246.0,125.3" class="line rule-s"/>
+<rect x="58.0" y="124.2" width="8" height="8" class="rule-f"/>
+<rect x="150.0" y="107.7" width="8" height="8" class="rule-f"/>
+<rect x="242.0" y="121.3" width="8" height="8" class="rule-f"/>
+<text x="256.0" y="129.3" class="t-lab rule-t">rule 0.71</text>
+<line x1="76.0" x2="76.0" y1="39.9" y2="69.3" class="whisk model-s"/>
+<line x1="168.0" x2="168.0" y1="39.9" y2="57.6" class="whisk model-s"/>
+<line x1="260.0" x2="260.0" y1="39.9" y2="48.7" class="whisk model-s"/>
+<polyline points="76.0,48.7 168.0,48.1 260.0,45.8" class="line model-s"/>
+<circle cx="76.0" cy="48.7" r="4.5" class="model-f"/>
+<circle cx="168.0" cy="48.1" r="4.5" class="model-f"/>
+<circle cx="260.0" cy="45.8" r="4.5" class="model-f"/>
+<text x="270.0" y="49.8" class="t-lab model-t">forest 0.98</text>
+</svg><svg viewBox="0 0 360 290" role="img" aria-label="Precision at K for the outcome impressions fall below 80 percent of May. Forest 0.86, 0.85, 0.83; rule 0.77, 0.76, 0.78; base rate 0.70." class="fig-svg">
+<text x="40" y="18" class="t-title">Page loses 20% of impressions in June</text>
+<line x1="40" x2="282" y1="216.6" y2="216.6" class="grid"/>
+<text x="34" y="220.6" class="t-axis" text-anchor="end">0.4</text>
+<line x1="40" x2="282" y1="157.7" y2="157.7" class="grid"/>
+<text x="34" y="161.7" class="t-axis" text-anchor="end">0.6</text>
+<line x1="40" x2="282" y1="98.8" y2="98.8" class="grid"/>
+<text x="34" y="102.8" class="t-axis" text-anchor="end">0.8</text>
+<line x1="40" x2="282" y1="39.9" y2="39.9" class="grid"/>
+<text x="34" y="43.9" class="t-axis" text-anchor="end">1.0</text>
+<line x1="40" x2="282" y1="127.0" y2="127.0" class="base-line"/>
+<text x="288" y="131.0" class="t-base">base 0.70</text>
+<text x="69.0" y="266" class="t-axis" text-anchor="middle">K = 20</text>
+<text x="161.0" y="266" class="t-axis" text-anchor="middle">K = 50</text>
+<text x="253.0" y="266" class="t-axis" text-anchor="middle">K = 100</text>
+<line x1="62.0" x2="62.0" y1="69.3" y2="142.9" class="whisk rule-s"/>
+<line x1="154.0" x2="154.0" y1="87.0" y2="151.8" class="whisk rule-s"/>
+<line x1="246.0" x2="246.0" y1="84.1" y2="128.2" class="whisk rule-s"/>
+<polyline points="62.0,107.6 154.0,109.4 246.0,104.7" class="line rule-s"/>
+<rect x="58.0" y="103.6" width="8" height="8" class="rule-f"/>
+<rect x="150.0" y="105.4" width="8" height="8" class="rule-f"/>
+<rect x="242.0" y="100.7" width="8" height="8" class="rule-f"/>
+<text x="256.0" y="108.7" class="t-lab rule-t">rule 0.78</text>
+<line x1="76.0" x2="76.0" y1="39.9" y2="113.5" class="whisk model-s"/>
+<line x1="168.0" x2="168.0" y1="39.9" y2="128.2" class="whisk model-s"/>
+<line x1="260.0" x2="260.0" y1="39.9" y2="151.8" class="whisk model-s"/>
+<polyline points="76.0,81.1 168.0,83.5 260.0,89.9" class="line model-s"/>
+<circle cx="76.0" cy="81.1" r="4.5" class="model-f"/>
+<circle cx="168.0" cy="83.5" r="4.5" class="model-f"/>
+<circle cx="260.0" cy="89.9" r="4.5" class="model-f"/>
+<text x="270.0" y="93.9" class="t-lab model-t">forest 0.83</text>
+</svg></div>
+<figcaption><b>Figure 2.</b> Precision@K, mean over five client-grouped folds. Marks are fold means; thin vertical bars are the lowest and highest single fold. The dashed line is the base rate. The forest is clearly above the rule for the CTR outcome; for the decline outcome the two overlap across folds.</figcaption>
+</figure>
+<p>For the CTR outcome every learned model beats the rule at every K, and the simple ones come close to the forest (logistic regression 0.94 at K = 50 against 0.97). Visibility alone is the weakest ranking, with an AUC of 0.43, slightly worse than random order. For the decline outcome only the forest has an edge, and logistic regression is below the rule.</p>
+
+<h3>4.2 Is the edge stable, or only an average?</h3>
+<figure>
+<svg viewBox="0 0 480 230" role="img" aria-label="Forest minus rule precision at 50, one dot per fold. CTR outcome: all five folds above zero. Decline outcome: three of five above zero, interval crosses zero." class="fig-svg">
+<line x1="128.0" x2="128.0" y1="20" y2="170" class="grid"/>
+<text x="128.0" y="190" class="t-axis" text-anchor="middle">-0.1</text>
+<line x1="183.3" x2="183.3" y1="20" y2="170" class="zero"/>
+<text x="183.3" y="190" class="t-axis" text-anchor="middle">0.0</text>
+<line x1="238.7" x2="238.7" y1="20" y2="170" class="grid"/>
+<text x="238.7" y="190" class="t-axis" text-anchor="middle">+0.1</text>
+<line x1="294.0" x2="294.0" y1="20" y2="170" class="grid"/>
+<text x="294.0" y="190" class="t-axis" text-anchor="middle">+0.2</text>
+<line x1="349.3" x2="349.3" y1="20" y2="170" class="grid"/>
+<text x="349.3" y="190" class="t-axis" text-anchor="middle">+0.3</text>
+<line x1="404.7" x2="404.7" y1="20" y2="170" class="grid"/>
+<text x="404.7" y="190" class="t-axis" text-anchor="middle">+0.4</text>
+<line x1="460.0" x2="460.0" y1="20" y2="170" class="grid"/>
+<text x="460.0" y="190" class="t-axis" text-anchor="middle">+0.5</text>
+<text x="294.0" y="218" class="t-axis" text-anchor="middle">forest minus rule, Precision@50 (higher is better for the forest)</text>
+<text x="118" y="74" class="t-lab" text-anchor="end">Page keeps a low CTR</text>
+<rect x="249.7" y="61" width="106.2" height="18" class="ci"/>
+<line x1="302.9" x2="302.9" y1="57" y2="83" class="mean"/>
+<circle cx="260.8" cy="70" r="4.5" class="model-f dotring"/>
+<circle cx="282.9" cy="70" r="4.5" class="model-f dotring"/>
+<circle cx="404.7" cy="70" r="4.5" class="model-f dotring"/>
+<circle cx="360.4" cy="70" r="4.5" class="model-f dotring"/>
+<circle cx="205.5" cy="70" r="4.5" class="model-f dotring"/>
+<text x="118" y="139" class="t-lab" text-anchor="end">Page loses 20% of impressions</text>
+<rect x="178.9" y="126" width="126.2" height="18" class="ci"/>
+<line x1="232.0" x2="232.0" y1="122" y2="148" class="mean"/>
+<circle cx="227.6" cy="135" r="4.5" class="model-f dotring"/>
+<circle cx="172.3" cy="135" r="4.5" class="model-f dotring"/>
+<circle cx="205.5" cy="135" r="4.5" class="model-f dotring"/>
+<circle cx="393.6" cy="135" r="4.5" class="model-f dotring"/>
+<circle cx="161.2" cy="135" r="4.5" class="model-f dotring"/>
+</svg>
+<figcaption><b>Figure 3.</b> Forest minus rule at K = 50, one dot per fold; the shaded bar is a 90% bootstrap interval over the five folds and the thick tick is the mean. With only five folds the interval is rough, so I read it as directional.</figcaption>
+</figure>
+<ul>
+<li><b>CTR outcome: stable.</b> The forest wins five of five folds at P@50 (mean +0.216, interval +0.120 to +0.312, excludes zero), and beats the rule’s AUC in 16 of 17 clients inside their own data (median +0.121).</li>
+<li><b>Decline outcome: directional.</b> The forest wins three of five folds (mean +0.088, interval −0.008 to +0.220, includes zero). Fold 4 carries the average: without it the mean difference is about +0.015. Inside single clients it is ahead in 15 of 19, but its absolute AUCs sit between 0.50 and 0.64.</li>
+</ul>
+
+<h3>4.3 Why the split matters</h3>
+<figure>
+<svg viewBox="0 0 480 250" role="img" aria-label="Precision at 50 under a random-row split versus a client-grouped split. Forest decline outcome drops from 1.000 to 0.852; the rule does not change." class="fig-svg">
+<line x1="150.0" x2="150.0" y1="14" y2="190" class="grid"/>
+<text x="150.0" y="208" class="t-axis" text-anchor="middle">0.7</text>
+<line x1="245.6" x2="245.6" y1="14" y2="190" class="grid"/>
+<text x="245.6" y="208" class="t-axis" text-anchor="middle">0.8</text>
+<line x1="341.2" x2="341.2" y1="14" y2="190" class="grid"/>
+<text x="341.2" y="208" class="t-axis" text-anchor="middle">0.9</text>
+<line x1="436.9" x2="436.9" y1="14" y2="190" class="grid"/>
+<text x="436.9" y="208" class="t-axis" text-anchor="middle">1.0</text>
+<text x="303.0" y="234" class="t-axis" text-anchor="middle">Precision@50</text>
+<text x="140" y="36" class="t-lab" text-anchor="end">Forest, decline outcome</text>
+<text x="140" y="51" class="t-axis" text-anchor="end">random 1.000, grouped 0.852</text>
+<line x1="295.4" x2="436.9" y1="38" y2="38" class="link model-s"/>
+<circle cx="436.9" cy="38" r="5" class="ring model-s"/>
+<circle cx="295.4" cy="38" r="5" class="model-f"/>
+<text x="140" y="78" class="t-lab" text-anchor="end">Forest, CTR outcome</text>
+<text x="140" y="93" class="t-axis" text-anchor="end">random 0.988, grouped 0.972</text>
+<line x1="410.1" x2="425.4" y1="80" y2="80" class="link model-s"/>
+<circle cx="425.4" cy="80" r="5" class="ring model-s"/>
+<circle cx="410.1" cy="80" r="5" class="model-f"/>
+<text x="140" y="120" class="t-lab" text-anchor="end">Rule, decline outcome</text>
+<text x="140" y="135" class="t-axis" text-anchor="end">random 0.760, grouped 0.764</text>
+<line x1="207.4" x2="211.2" y1="122" y2="122" class="link rule-s"/>
+<circle cx="207.4" cy="122" r="5" class="ring rule-s"/>
+<circle cx="211.2" cy="122" r="5" class="rule-f"/>
+<text x="140" y="162" class="t-lab" text-anchor="end">Rule, CTR outcome</text>
+<text x="140" y="177" class="t-axis" text-anchor="end">random 0.760, grouped 0.756</text>
+<line x1="203.6" x2="207.4" y1="164" y2="164" class="link rule-s"/>
+<circle cx="207.4" cy="164" r="5" class="ring rule-s"/>
+<circle cx="203.6" cy="164" r="5" class="rule-f"/>
+<circle cx="158" cy="12" r="0"/>
+</svg>
+<figcaption><b>Figure 4.</b> Precision@50 under a random-row split (hollow) and a client-grouped split (filled). The rule learns nothing, so it does not change. The forest on the decline outcome falls from a perfect 1.000 to 0.852; part of its apparent skill was memorizing clients.</figcaption>
+</figure>
+
+<h3>4.4 What the model leans on</h3>
+<p>No single feature dominates. On held-out clients, shuffling average position hurts the forest most (AUC drop 0.038), then days with impressions (0.021) and CTR (0.020). The ablations below show where the CTR skill comes from.</p>
+<div class="tblwrap"><table><caption>Leakage and ablation tests (random forest, client-grouped folds)</caption><thead><tr><th scope="col">Variant</th><th scope="col" class="n">CTR outcome P@50 / AUC</th><th scope="col" class="n">Decline outcome P@50 / AUC</th></tr></thead><tbody><tr><td>Full 15-feature set</td><td class="n">0.972 / 0.760</td><td class="n">0.852 / 0.597</td></tr><tr><td>Without the CTR features</td><td class="n">0.944 / 0.624</td><td class="n">0.796 / 0.574</td></tr><tr><td>Without the momentum features</td><td class="n">0.964 / 0.748</td><td class="n">0.824 / 0.604</td></tr><tr><td>Exposure and position only (8 features)</td><td class="n">0.936 / 0.620</td><td class="n">0.836 / 0.589</td></tr><tr class="hl"><td><b>Deliberately leaked</b> (a June column added)</td><td class="n">1.000 / 1.000</td><td class="n">1.000 / 1.000</td></tr></tbody></table></div>
+<p>Removing the CTR features drops the CTR outcome’s AUC from 0.760 to 0.624. That fits persistence: a page far below its tier’s CTR for three months keeps being far below it. For the decline outcome the momentum features add nothing beyond exposure and position (AUC 0.604 without them, 0.597 with them).</p>
+
+<h3>4.5 Where it is wrong</h3>
+<ul>
+<li>The most confident wrong calls on the decline outcome are pages that did fall in June, but by 3% to 11%, short of the 20% cut. They are near misses of a threshold, not unrelated picks.</li>
+<li>In an earlier version, the most confident wrong CTR calls were tiny pages with a few hundred impressions and no clicks whose CTR recovered in June. That is what motivated a floor of 5 expected clicks before a page can enter the review queue.</li>
+<li>Scores are for ranking, not for reading as probabilities: balanced class weights shift them about 0.15 to 0.20 below the actual decline rate in every tier.</li>
+<li>Client concentration is real. In four of the five folds, 84% to 100% of the forest’s top 50 for decline comes from one client, so those folds mostly measure one client.</li>
+</ul>
+
+<h3>4.6 The playbook, graded on June</h3>
+<p>I then turned the ranking into actions (Section 6) and graded the groups on June, again on pages whose clients the model had not seen.</p>
+<div class="tblwrap"><table><caption>The playbook graded on June, on pages from clients the model never saw</caption><thead><tr><th scope="col">Group</th><th scope="col" class="n">Pages</th><th scope="col" class="n">Declined in June</th><th scope="col" class="n">Low CTR in June (labelled pages)</th></tr></thead><tbody><tr><td>All eligible pages (base rate)</td><td class="n">90,966</td><td class="n">0.704</td><td class="n">0.570 (65,088)</td></tr><tr><td>Frozen rule, top 50</td><td class="n">50</td><td class="n">0.660</td><td class="n">0.761 (46)</td></tr><tr class="hl"><td>Playbook review queue, top 50, client cap 30%</td><td class="n">50</td><td class="n">0.680</td><td class="n">0.959 (49)</td></tr><tr><td><code>review_ctr_metadata</code>, whole group</td><td class="n">7,313</td><td class="n">0.767</td><td class="n">0.892 (7,234)</td></tr><tr><td><code>review_content_refresh</code>, whole group</td><td class="n">2,849</td><td class="n">0.842</td><td class="n">0.173 (2,839)</td></tr><tr><td><code>check_technical_first</code>, whole group</td><td class="n">1,001</td><td class="n">0.544</td><td class="n">0.634 (571)</td></tr><tr><td><code>monitor_only</code>, whole group</td><td class="n">79,195</td><td class="n">0.696</td><td class="n">0.546 (53,906)</td></tr></tbody></table></div>
+<ul>
+<li>The <b>CTR review group</b> has a low-CTR rate of 0.892, 1.57 times the base rate, on a large group. The lift holds in every tier and expected-click stratum with enough pages:</li>
+</ul>
+<div class="tblwrap"><table><caption>Is the CTR lift carried by one corner? <code>review_ctr_metadata</code> pages, June low-CTR rate against the same stratum’s base rate</caption><thead><tr><th scope="col">Stratum</th><th scope="col" class="n">Labelled pages</th><th scope="col" class="n">Rate</th><th scope="col" class="n">Lift</th></tr></thead><tbody><tr><td>page 1</td><td class="n">5,887</td><td class="n">0.897</td><td class="n">1.55×</td></tr><tr><td>striking (11–20)</td><td class="n">1,228</td><td class="n">0.871</td><td class="n">1.56×</td></tr><tr><td>top 3</td><td class="n">96</td><td class="n">0.938</td><td class="n">1.62×</td></tr><tr><td>pages 3–5</td><td class="n">23</td><td class="n">not reported (under 50)</td><td class="n">–</td></tr><tr><td>5–20 expected clicks</td><td class="n">1,899</td><td class="n">0.837</td><td class="n">1.63×</td></tr><tr><td>20–100 expected clicks</td><td class="n">3,653</td><td class="n">0.896</td><td class="n">1.74×</td></tr><tr><td>100+ expected clicks</td><td class="n">1,682</td><td class="n">0.946</td><td class="n">1.47×</td></tr></tbody></table></div>
+<ul>
+<li>The <b>top-50 review queue</b> reaches 0.959 on the CTR outcome (49 labelled pages) against 0.761 (46 pages) for the frozen rule. On decline it scores 0.680, below the 0.704 base rate: it is not a decline detector. A client cap of 30% broadens it from 7 to 9 clients, but 9 is still few out of 37.</li>
+<li>The <b>content-refresh group</b> declines 1.20 times as often as average (0.842): positive and modest, and directional for the reason in 4.2.</li>
+<li>Pages sent to <b>technical check</b> decline less than average (0.544), which fits the idea that a page already collapsed has less left to lose.</li>
+</ul>
+</section>
+
+<section id="limits">
+<h2>5. Limitations and honest framing</h2>
+<ul>
+<li><b>One month, one portfolio.</b> Features cover three months and outcomes one. Seasonality, a different month or a different set of clients is untested, and no interval is reported on any single-month rate.</li>
+<li><b>The CTR outcome rewards persistence.</b> The features include March–May CTR and the outcome is June CTR. This is legitimate, with no June information in the features, but it is not independent evidence of hidden signal. In the top 20 of the review queue, all 19 labelled pages kept a low CTR in June.</li>
+<li><b>The decline outcome is a weak target.</b> Seven in ten pages meet it, so even a good ranking has little room to show lift, and the model’s edge there is directional.</li>
+<li><b>Concentration.</b> The review queue draws from 9 of 37 clients and contains no content-refresh items, because the CTR estimate covers three months of impressions and the slip estimate only one. I did not test a per-month normalization.</li>
+<li><b>Thresholds are policy choices.</b> The volume floors (100 and 50 impressions), the 20% decline cut, the top-20% model cut-off, the 5-expected-click floor, the 30% client cap and the 0.5/0.5 weights were not tested against alternatives.</li>
+<li><b>A snippet or AI answer may take the click.</b> For 19 of the top 20 pages the data cannot say whether a metadata edit could help.</li>
+<li><b>No causal design.</b> Nothing here shows that a refresh or a new title improves a page. The data is observational.</li>
+<li><b>No claim about Google.</b> This models outcomes in one portfolio; it says nothing about how Google ranks pages.</li>
+</ul>
+<div class="tblwrap"><table><caption>Claim ledger: what each sentence of this paper is allowed to say</caption><thead><tr><th scope="col">Claim</th><th scope="col">Status</th></tr></thead><tbody><tr><td>On held-out clients, the forest ranks pages whose CTR stays low better than the rule (0.97 vs 0.76 at K = 50, base rate 0.57; 5 of 5 folds; 16 of 17 clients).</td><td><span class="tag">Measured</span>, one month</td></tr><tr><td>Part of that skill is persistence of a CTR gap the features already contain.</td><td><span class="tag">Measured</span> (ablation)</td></tr><tr><td>The forest ranks declining pages better than the rule (0.85 vs 0.76, base rate 0.70).</td><td><span class="tag">Directional</span>: 3 of 5 folds, interval includes zero</td></tr><tr><td>The top-50 review queue finds declining pages.</td><td><span class="tag">Not supported</span> (0.680 vs 0.704 base rate)</td></tr><tr><td>Engagement or GA4 signals help rank pages.</td><td><span class="tag">Not tested</span> (GA4 present on 4.2% of March rows)</td></tr><tr><td>Editing a recommended page will raise its CTR or traffic.</td><td><span class="tag">Not shown</span>: no experiment</td></tr></tbody></table></div>
+</section>
+
+<section id="recs">
+<h2>6. Ranked recommendations (action playbook)</h2>
+<p><b>Intended use.</b> Each cycle, give a reviewer up to 50 pages from the review queue, no more than 30% from one client. Every page gets one action from an ordered rule; the first check that fires wins, and suspicious data is caught before any “edit the page” action.</p>
+<div class="tblwrap"><table><caption>Ranked recommendations: what a person does, in order of attention</caption><thead><tr><th scope="col">Priority</th><th scope="col">Action</th><th scope="col" class="n">Pages</th><th scope="col">What a person does</th><th scope="col">Evidence</th></tr></thead><tbody><tr><td>1</td><td><code>review_ctr_metadata</code></td><td class="n">7,313</td><td>Compare title and snippet with search intent and the CTR gap. A person approves any edit.</td><td><span class="tag">Measured</span>, stable across folds; partly persistence</td></tr><tr><td>2</td><td><code>review_content_refresh</code></td><td class="n">2,849</td><td>Review the decline evidence, after technical causes are ruled out.</td><td><span class="tag">Directional</span> only</td></tr><tr><td>3</td><td><code>check_technical_first</code></td><td class="n">1,001</td><td>Check indexing, redirects, URL and tracking changes before any content change. May impressions fell 90% or more.</td><td><span class="tag">Data suspicion</span>, not a content finding</td></tr><tr><td>4</td><td><code>verify_data_first</code></td><td class="n">342</td><td>Confirm measurement. Average position below 1, or zero clicks on 5,000+ impressions.</td><td><span class="tag">Data suspicion</span></td></tr><tr><td>5</td><td><code>verify_then_review</code></td><td class="n">266</td><td>Verify an extreme rise (top 1% of rises), then review if it holds.</td><td><span class="tag">Data suspicion</span></td></tr><tr><td>6</td><td><code>monitor_only</code></td><td class="n">79,195</td><td>Nothing now. Includes pages with fewer than 5 expected clicks.</td><td>No action</td></tr></tbody></table></div>
+<figure>
+<figcaption><b>How the rule decides.</b> In order: (1) average position below 1, or zero clicks on 5,000+ impressions, goes to <code>verify_data_first</code>; (2) an extreme rise goes to <code>verify_then_review</code>; (3) May impressions down 90% or more goes to <code>check_technical_first</code>; (4) fewer than 5 expected clicks goes to <code>monitor_only</code>; (5) a CTR-gap page in the model’s top 20% goes to <code>review_ctr_metadata</code>; (6) a slipping page in the model’s top 20% goes to <code>review_content_refresh</code>; (7) everything else is <code>monitor_only</code>. Review items are ordered by estimated clicks at stake, not by model score.</figcaption>
+</figure>
+<p><b>What the top 20 looks like.</b> Sixteen are page-1 pages, three are top-3 and one is in the striking tier. Their May impressions run from 16,123 to 280,892, and their CTR sits between 0.00% and 0.19% against a tier expectation of 0.32% or 0.47%. All 19 labelled pages kept a low CTR in June.</p>
+<p><b>Cost and value.</b> Reading 50 pages takes about 10 hours. Using the measured June rates, the review queue is expected to contain about 48 pages with a real CTR gap, against 38 for the frozen rule and 28.5 for random picks (the estimate assumes unlabelled pages behave like labelled ones).</p>
+<div class="tblwrap"><table><caption>Reviewer effort for one cycle of 50 pages (assumption: 12 minutes per page, 10 hours in total)</caption><thead><tr><th scope="col">Queue</th><th scope="col" class="n">Expected pages with a real CTR gap</th><th scope="col" class="n">Expected wasted reviews</th></tr></thead><tbody><tr><td>Playbook review queue</td><td class="n">48.0</td><td class="n">2.0</td></tr><tr><td>Frozen rule, top 50</td><td class="n">38.0</td><td class="n">12.0</td></tr><tr><td>Random 50 pages</td><td class="n">28.5</td><td class="n">21.5</td></tr></tbody></table></div>
+<h3>What must not be automated</h3>
+<ul>
+<li>Any edit to a page. The queue only orders candidates; a person accepts or rejects each one.</li>
+<li>Pages routed to a data or technical check never reach a content edit before the check is done.</li>
+<li>No sentence of the form “doing X will raise Y” in any report built from this queue.</li>
+<li>Raw queries, URLs, titles and client names are never shown.</li>
+</ul>
+<h3>Before acting on a page, a person asks</h3>
+<ul>
+<li>Does the reason fit what I see on the live page and in the search result?</li>
+<li>Is a sibling page absorbing the demand, or is there a seasonal or campaign explanation?</li>
+<li>For a CTR item: does a snippet, answer box or AI answer take the click?</li>
+<li>Is this client already over-represented in this cycle’s queue?</li>
+<li>Were tracking and indexing problems ruled out?</li>
+</ul>
+<h3>Keeping it honest over time (proposed, not running)</h3>
+<p>Before each cycle, check that the data still looks like the data the model was built on (for example a drift score on position and CTR features). After each month’s real outcomes arrive, recompute P@50 for the model and for the frozen rule. If the model falls below the rule in two consecutive labelled periods, fall back to the rule-only queue until it is retrained, because added complexity has to keep earning its place.</p>
+</section>
+
+<section id="repro">
+<h2>7. Reproducibility</h2>
+<p>Everything lives in the <a href="https://github.com/LukasDjuric/FlyRank_intership">repository</a>. The notebooks run in order and each one reads the previous one’s output:</p>
+<ol>
+<li><a href="https://github.com/LukasDjuric/FlyRank_intership/blob/main/work/notebooks/w03_data_contract.ipynb">w03_data_contract</a>: the data contract, grain check and the deliberate-leak demonstration (March slice).</li>
+<li><a href="https://github.com/LukasDjuric/FlyRank_intership/blob/main/work/notebooks/w04_baseline_score.ipynb">w04_baseline_score</a>: the warehouse query (cached locally), eligibility, the frozen rule, June outcomes, top-20 review.</li>
+<li><a href="https://github.com/LukasDjuric/FlyRank_intership/blob/main/work/notebooks/w05_model.ipynb">w05_model</a>: three models, five client-grouped folds, comparison table, errors.</li>
+<li><a href="https://github.com/LukasDjuric/FlyRank_intership/blob/main/work/notebooks/w06_validation_audit.ipynb">w06_validation_audit</a>: random against grouped split, per-fold and per-client stability, ablations, injected leak, claim rewrite.</li>
+<li><a href="https://github.com/LukasDjuric/FlyRank_intership/blob/main/work/notebooks/w07_action_playbook.ipynb">w07_action_playbook</a>: out-of-fold scores for every page, the playbook rule, grading, exports and figures.</li>
+<li><a href="https://github.com/LukasDjuric/FlyRank_intership/blob/main/work/notebooks/capstone.ipynb">capstone</a>: consolidates the saved results this page is built from.</li>
+</ol>
+<dl class="terms">
+<dt>Seed</dt><dd>42 for every model and bootstrap.</dd>
+<dt>Environment</dt><dd>Python 3.10.11, pandas 2.3.3, numpy 2.2.6, scikit-learn 1.7.2, matplotlib 3.10.9. Random-forest results can move a few points between library versions; the stable claims are the ranking of methods and the base-rate comparison, not the third decimal.</dd>
+<dt>Data access</dt><dd>The release is gated on Hugging Face (free, instant approval). A read token is entered through a password prompt and never written into a notebook. The heavy warehouse scan runs once and is cached under <code>work/outputs/</code>.</dd>
+<dt>What is not in the repository</dt><dd>Datasets and pseudonymous row-level queues are kept out of git on purpose. Metrics files and ID-free figures are committed. The numbers in this paper come from <code>work/outputs/w07_metrics.json</code> and the fold-level result files the notebooks write.</dd>
+</dl>
+<pre><code>git clone https://github.com/LukasDjuric/FlyRank_intership.git
+pip install -r requirements.txt
+# open work/notebooks/ and run w03 to w07 in order, then capstone</code></pre>
+</section>
+
+<section id="credit">
+<h2>8. Acknowledgments and data credit</h2>
+<p><b>Built on the <a href="https://flyrank.ai">FlyRank</a> ML Internship dataset</b> (<a href="https://flyrank.ai">flyrank.ai</a>): the pseudonymized warehouse release <a href="https://huggingface.co/datasets/FlyRank/internship-warehouse"><code>FlyRank/internship-warehouse</code></a>, used under its data-use terms. Thank you to the FlyRank ML internship track leads and mentors for the data, the weekly sessions and the review of earlier drafts.</p>
+<p>AI assistants were used to draft code and text. I ran every notebook and checked the numbers in this paper against its output. This is an internship project, not an official FlyRank publication. It contains no client names, domains, URLs or raw queries.</p>
+</section>
+<footer>
+<p>Observed and measured results on one month of pseudonymized data, offered as decision support. Questions or corrections: open an issue in the <a href="https://github.com/LukasDjuric/FlyRank_intership">repository</a>.</p>
+</footer>
+</main>
+</div>
+</body>
+</html>
